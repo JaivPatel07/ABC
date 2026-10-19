@@ -45,6 +45,7 @@ from .pages import _load_frame, _load_table, _reset_all, _store_upload
 from .widgets import (
     chips,
     column_picker,
+    display_frame,
     download_button,
     full_width,
     metric_row,
@@ -75,10 +76,17 @@ def render_fill_sidebar(state) -> None:
     with st.sidebar:
         st.divider()
         current = int(state.get("fill_step", 1) or 1)
+        # Initialise the widget's session-state value once instead of passing
+        # ``index``.  Callbacks may update ``fill_step_nav`` before the rerun,
+        # and Streamlit warns when a widget has both a default and a value set
+        # through the Session State API.
+        if "fill_step_nav" not in st.session_state:
+            st.session_state["fill_step_nav"] = FILL_STEPS[
+                min(max(current, 1), len(FILL_STEPS)) - 1
+            ]
         choice = st.radio(
             "Steps",
             options=FILL_STEPS,
-            index=min(max(current, 1), len(FILL_STEPS)) - 1,
             key="fill_step_nav",
             label_visibility="collapsed",
         )
@@ -234,7 +242,7 @@ def _step_fill_data(state) -> None:
         "You will choose which of these columns get an abbreviation column in step 3. "
         "The names come from your file - nothing is hardcoded."
     )
-    st.dataframe(frame.head(25), **full_width(st.dataframe), hide_index=True)
+    st.dataframe(display_frame(frame.head(25)), **full_width(st.dataframe), hide_index=True)
     _next_fill(state, "Next: abbreviation list", enabled=True)
 
 
@@ -308,7 +316,7 @@ def _step_fill_abbreviations(state) -> None:
 
     if not phrase_col or not abbr_col:
         note("Select both columns so the abbreviations can be loaded.", "warning")
-        st.dataframe(frame.head(15), **full_width(st.dataframe), hide_index=True)
+        st.dataframe(display_frame(frame.head(15)), **full_width(st.dataframe), hide_index=True)
         return
     if phrase_col == abbr_col:
         note("The same column is selected twice - please choose two different columns.", "error")
@@ -334,7 +342,7 @@ def _step_fill_abbreviations(state) -> None:
             note(f"{report.added:,} abbreviations are ready to use.", "success")
 
     with st.expander("Preview of the abbreviation file"):
-        st.dataframe(frame.head(30), **full_width(st.dataframe), hide_index=True)
+        st.dataframe(display_frame(frame.head(30)), **full_width(st.dataframe), hide_index=True)
 
     _next_fill(state, "Next: choose columns", enabled=True)
 
@@ -675,7 +683,7 @@ def _step_fill_download(state) -> None:
             )
 
     st.markdown("**Preview of the new file**")
-    st.dataframe(result.output_frame.head(25), **full_width(st.dataframe), hide_index=True)
+    st.dataframe(display_frame(result.output_frame.head(25)), **full_width(st.dataframe), hide_index=True)
     st.caption(
         "Every original column is kept. The abbreviation columns are inserted directly "
         "after the columns they belong to."

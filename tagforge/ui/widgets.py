@@ -7,9 +7,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
+from pandas.api.types import infer_dtype, is_object_dtype
+
+from ..text_utils import is_missing, to_text
 
 __all__ = [
     "full_width",
+    "display_frame",
     "section",
     "note",
     "metric_row",
@@ -22,6 +26,48 @@ __all__ = [
     "chips",
     "two_column",
 ]
+
+
+# Object-dtype columns whose values cannot be converted to Arrow by Streamlit.
+# The usual cause is a spreadsheet column that is mostly text but contains a few
+# cells formatted as dates or numbers: pandas keeps the whole column as
+# ``object`` with a mixture of ``str``, ``datetime`` and numeric values.
+_ARROW_INCOMPATIBLE_KINDS = frozenset(
+    {"mixed", "mixed-integer", "complex", "unknown-array"}
+)
+
+
+def display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a display-only copy safe for ``st.dataframe``.
+
+    A column such as "Description of Terms" is often stored as ``object``
+    because it mixes text, dates and numbers.  Streamlit converts DataFrames to
+    Arrow, which cannot serialize such a column, so the mixed values are turned
+    into text *for display only*.  Missing cells stay missing (``pd.NA``).
+
+    The original frame is never modified: tag generation, matching and the
+    Excel/CSV exports keep using the exact values that were read from the
+    uploaded file.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        return frame
+
+    display: pd.DataFrame | None = None
+    for column in frame.columns:
+        series = frame[column]
+        if not is_object_dtype(series):
+            continue
+        if infer_dtype(series, skipna=True) not in _ARROW_INCOMPATIBLE_KINDS:
+            continue
+        if display is None:
+            display = frame.copy()
+        display[column] = pd.Series(
+            [pd.NA if is_missing(value) else to_text(value) for value in series],
+            index=frame.index,
+            dtype="string",
+        )
+    return frame if display is None else display
+
 
 def full_width(element) -> Dict[str, Any]:
     """``kwargs`` that make an element span the page.

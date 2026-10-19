@@ -5,7 +5,9 @@ driven this way, so the state that normally comes from an upload is injected -
 exactly the values the upload handlers would have stored.
 """
 
+import datetime as dt
 import io
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +18,7 @@ from tagforge.column_fill import FillConfig, FillMapping
 from tagforge.ui.fill_pages import FILL_STEPS
 from tagforge.ui.modes import MODE_FILL, MODE_TAG
 from tagforge.ui.pages import STEPS
+from tagforge.ui.widgets import display_frame
 
 APP = Path(__file__).resolve().parent.parent / "app.py"
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
@@ -248,3 +251,73 @@ def test_next_button_advances_the_fill_mode():
     assert at.session_state["tf_fill_step"] == 4
     assert at.session_state["fill_step_nav"] == FILL_STEPS[3]
     assert at.session_state["tf_fill_result"] is not None
+
+
+def test_fill_navigation_radio_keeps_the_selected_step_across_reruns():
+    at = _inject_fill(_app_test())
+    at.run()
+    assert not at.exception
+
+    at.radio(key="fill_step_nav").set_value(FILL_STEPS[2]).run()
+    assert not at.exception
+    assert at.session_state["tf_fill_step"] == 3
+    assert at.session_state["fill_step_nav"] == FILL_STEPS[2]
+
+    # A plain rerun (e.g. any widget interaction) keeps the selection.
+    at.run()
+    assert at.session_state["tf_fill_step"] == 3
+    assert at.session_state["fill_step_nav"] == FILL_STEPS[2]
+
+
+def test_fill_navigation_does_not_trigger_widget_state_warning(caplog, monkeypatch):
+    """Changing the step from a callback must not warn about a default value."""
+    from streamlit.elements.lib import policies
+
+    # The warning is logged only once per process; arm it for this test.
+    monkeypatch.setattr(policies, "_shown_default_value_warning", False)
+
+    at = _inject_fill(_app_test())
+    at.session_state["tf_fill_step"] = 3
+    with caplog.at_level(logging.WARNING):
+        at.run()
+        at.button(key="fill_next").click().run()
+
+    assert not at.exception
+    assert at.session_state["tf_fill_step"] == 4
+    assert at.session_state["fill_step_nav"] == FILL_STEPS[3]
+    assert "created with a default value" not in caplog.text
+
+
+def test_display_frame_makes_mixed_text_and_date_columns_arrow_safe():
+    """A text column with stray dates/numbers must not break st.dataframe."""
+    import pyarrow as pa
+
+    frame = pd.DataFrame(
+        {
+            "Tag": ["P-101", "P-102", "P-103", "P-104"],
+            "Description of Terms": [
+                "Centrifugal pump",
+                dt.datetime(2025, 2, 1),
+                42,
+                None,
+            ],
+            "Commissioned": [dt.date(2025, 1, 1), None, dt.date(2025, 3, 1), dt.date(2025, 4, 1)],
+        }
+    )
+    original = frame.copy(deep=True)
+
+    shown = display_frame(frame)
+
+    assert shown["Description of Terms"].tolist()[:3] == [
+        "Centrifugal pump",
+        "2025-02-01 00:00:00",
+        "42",
+    ]
+    assert pd.isna(shown.loc[3, "Description of Terms"])
+    # A genuine date column is left alone for display.
+    assert shown["Commissioned"].dtype == object
+    assert isinstance(shown.loc[0, "Commissioned"], dt.date)
+    # The original frame is untouched, so matching and exports keep real values.
+    pd.testing.assert_frame_equal(frame, original)
+    # The exact conversion Streamlit performs now succeeds.
+    assert pa.Table.from_pandas(shown).num_rows == 4
