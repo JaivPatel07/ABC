@@ -221,7 +221,9 @@ def _store_upload(state, kind: str, uploaded) -> None:
                     "fill_mappings", "fill_result", "fill_result_fp",
                     "fill_export", "fill_export_fp")
         for widget_key in list(st.session_state.keys()):
-            if widget_key in ("fill_sources",) or widget_key.startswith(("fill_out::", "fill_rule::")):
+            if widget_key in ("fill_targets", "fill_sources") or widget_key.startswith(
+                ("fill_src_for::", "fill_out::", "fill_mode::", "fill_rule::")
+            ):
                 del st.session_state[widget_key]
     if kind == "abbr":
         state.clear("abbr_phrase_col", "abbr_abbr_col", "abbr_signature", "table", "table_report",

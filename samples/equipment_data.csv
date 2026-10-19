@@ -1,30 +1,30 @@
-Sr No,Plant Section,Equipment Description,Parameter,Qty,Remarks
-1,Power House,Cooling Tower No 2,Temperature,2,old tag: CT-02
-2,Power House,Cooling Tower No.  3,Temperature,2,old tag: CT-03
-3,Boiler House,boiler feed water pump a,Flow,1,lowercase source data
-4,Boiler House,Boiler Feed Water Pump B,Flow,1,
-5,Boiler House,Primary Air Fan - 1,Pressure,1,
-6,Boiler House,Primary Air Fan - 1,Pressure,1,exact duplicate of row 5 -> duplicate tag
-7,Boiler House,Primary Air Fan,Pressure,1,
-8,Boiler House,Induced Draft Fan,Pressure,1,
-9,Boiler House,Steam Drum Level Transmitter,Level,1,
-10,Boiler House,   steam   DRUM   pressure   TRANSMITTER  ,Pressure,1,messy spacing + casing
-11,Cooling Water System,Circulating Water Pump 1,Flow,1,
-12,Cooling Water System,Circulating Water Pump 2,Flow,1,
-13,Water Treatment Plant,Raw Water Storage Tank,Level,1,
-14,Water Treatment Plant,DM Water Storage Tank,Level,1,
-15,Water Treatment Plant,Effluent Treatment Plant Agitator,Level,1,Agitator is not mapped
-16,Flue Gas System,Flue Gas Desulphurisation Unit,Pressure,1,
-17,Flue Gas System,Electrostatic Precipitator,Pressure,1,
-18,Flue Gas System,Scrubber Recirculation Pump,Flow,1,Scrubber is not mapped
-19,Ash Handling,Ash Handling Conveyor 3,Flow,1,
-20,Ash Handling,Ash Silo Level Indicator,Level,1,Silo is not mapped
-21,Turbine Hall,Turbine Lube Oil Cooler,Temperature,1,
-22,Turbine Hall,Turbine Lube Oil Pump,Flow,1,
-23,Compressor House,Compressor Discharge Pressure Indicator,Pressure,1,
-24,Compressor House,Compressor Suction Temperature Gauge,Temperature,1,
-25,Compressor House,Instrument Air Receiver,Pressure,1,
-26,Utilities,Chiller Unit 2,Temperature,1,Chiller is not mapped
-27,Utilities,Fire Water Pump,Pressure,1,
-28,Utilities,,Level,0,empty description - nothing to convert
-29,Utilities,Emergency Diesel Generator,Level,1,Diesel/Generator are not mapped
+Sr No,Plant Section,Plant Section Abbr,Equipment Description,Equipment Description Abbr,Parameter,Parameter Abbr,Qty,Remarks
+1,Power House,,Cooling Tower No 2,,Temperature,,2,old tag: CT-02
+2,Power House,,Cooling Tower No.  3,,Temperature,,2,old tag: CT-03
+3,Boiler House,,boiler feed water pump a,,Flow,,1,lowercase source data
+4,Boiler House,,Boiler Feed Water Pump B,,Flow,,1,
+5,Boiler House,,Primary Air Fan - 1,,Pressure,,1,
+6,Boiler House,,Primary Air Fan - 1,,Pressure,,1,exact duplicate of row 5 -> duplicate tag
+7,Boiler House,,Primary Air Fan,,Pressure,,1,
+8,Boiler House,,Induced Draft Fan,,Pressure,,1,
+9,Boiler House,,Steam Drum Level Transmitter,,Level,,1,
+10,Boiler House,,   steam   DRUM   pressure   TRANSMITTER  ,,Pressure,,1,messy spacing + casing
+11,Cooling Water System,,Circulating Water Pump 1,,Flow,,1,
+12,Cooling Water System,,Circulating Water Pump 2,,Flow,,1,
+13,Water Treatment Plant,,Raw Water Storage Tank,,Level,,1,
+14,Water Treatment Plant,,DM Water Storage Tank,,Level,,1,
+15,Water Treatment Plant,,Effluent Treatment Plant Agitator,,Level,,1,Agitator is not mapped
+16,Flue Gas System,,Flue Gas Desulphurisation Unit,,Pressure,,1,
+17,Flue Gas System,,Electrostatic Precipitator,,Pressure,,1,
+18,Flue Gas System,,Scrubber Recirculation Pump,,Flow,,1,Scrubber is not mapped
+19,Ash Handling,,Ash Handling Conveyor 3,,Flow,,1,
+20,Ash Handling,,Ash Silo Level Indicator,,Level,,1,Silo is not mapped
+21,Turbine Hall,,Turbine Lube Oil Cooler,,Temperature,,1,
+22,Turbine Hall,,Turbine Lube Oil Pump,,Flow,,1,
+23,Compressor House,,Compressor Discharge Pressure Indicator,,Pressure,,1,
+24,Compressor House,,Compressor Suction Temperature Gauge,,Temperature,,1,
+25,Compressor House,,Instrument Air Receiver,,Pressure,,1,
+26,Utilities,,Chiller Unit 2,,Temperature,,1,Chiller is not mapped
+27,Utilities,,Fire Water Pump,,Pressure,,1,
+28,Utilities,,,,Level,,0,empty description - nothing to convert
+29,Utilities,,Emergency Diesel Generator,,Level,,1,Diesel/Generator are not mapped

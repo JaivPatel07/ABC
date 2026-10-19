@@ -63,8 +63,8 @@ def _inject_fill(at):
     at.session_state["tf_mode"] = MODE_FILL
     at.session_state["tf_fill_config"] = FillConfig()
     at.session_state["tf_fill_mappings"] = [
-        FillMapping("Equipment Description"),
-        FillMapping("Parameter"),
+        FillMapping("Equipment Description", "Equipment Description Abbr"),
+        FillMapping("Parameter", "Parameter Abbr"),
     ]
     return at
 
@@ -158,7 +158,7 @@ def test_start_over_clears_the_session():
 # ===========================================================================
 # column filler mode
 # ===========================================================================
-def test_fill_mode_step_three_suggests_columns_and_saves_the_mapping():
+def test_fill_mode_step_three_detects_pairs_and_saves_the_mapping():
     at = _inject_fill(_app_test())
     at.session_state["tf_fill_step"] = 3
     at.session_state["fill_step_nav"] = FILL_STEPS[2]
@@ -166,12 +166,33 @@ def test_fill_mode_step_three_suggests_columns_and_saves_the_mapping():
     assert not at.exception
 
     mappings = at.session_state["tf_fill_mappings"]
-    assert [mapping.source for mapping in mappings] == [
-        "Plant Section",
-        "Equipment Description",
-        "Parameter",
+    assert [(mapping.source, mapping.target) for mapping in mappings] == [
+        ("Equipment Description", "Equipment Description Abbr"),
+        ("Parameter", "Parameter Abbr"),
     ]
-    assert all(mapping.output.endswith("Abbr") for mapping in mappings)
+
+
+def test_fill_mode_step_three_select_all_and_clear():
+    at = _inject_fill(_app_test())
+    at.session_state["tf_fill_step"] = 3
+    at.session_state["fill_step_nav"] = FILL_STEPS[2]
+    at.run()
+    assert not at.exception
+
+    # Select all detected abbreviation columns -> three pairs
+    at.button(key="fill_select_all").click().run()
+    assert not at.exception
+    mappings = at.session_state["tf_fill_mappings"]
+    assert [(mapping.source, mapping.target) for mapping in mappings] == [
+        ("Plant Section", "Plant Section Abbr"),
+        ("Equipment Description", "Equipment Description Abbr"),
+        ("Parameter", "Parameter Abbr"),
+    ]
+
+    # Clear -> nothing selected, nothing to fill
+    at.button(key="fill_clear").click().run()
+    assert not at.exception
+    assert at.session_state["tf_fill_mappings"] == []
 
 
 def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():
@@ -184,11 +205,14 @@ def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():
     data = at.session_state["tf_fill_export"]
     assert data and data[:2] == b"PK"
     sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
-    assert "Filled Data" in sheets
-    assert {"Summary", "Not Found", "Run Settings"}.issubset(sheets)
+    # one simple download: a single sheet, no extra report sheets
+    assert list(sheets) == ["Filled Data"]
 
     filled = sheets["Filled Data"]
     assert len(filled) == 29
+    # no new columns were created: exactly the input columns
+    source = at.session_state["tf_data_frame"]
+    assert list(filled.columns) == [str(column) for column in source.columns]
     assert "Equipment Description Abbr" in filled.columns
     assert "Parameter Abbr" in filled.columns
     # word-wise mode rebuilds the whole sentence: "Cooling Tower No 2" -> "CT No 2"
@@ -222,8 +246,9 @@ def test_fill_mode_downloads_are_available():
     at.run()
     assert not at.exception
     labels = [button.label for button in at.get("download_button")]
-    assert any("filled Excel file" in label for label in labels)
-    assert any("summary report" in label for label in labels)
+    # a single simple download - no extra report / CSV buttons
+    assert len(labels) == 1
+    assert "filled Excel file" in labels[0]
 
 
 def test_next_button_advances_the_tag_wizard():

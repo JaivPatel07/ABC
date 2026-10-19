@@ -12,8 +12,10 @@ from typing import Optional, Sequence
 
 __all__ = [
     "guess_column",
+    "guess_fill_pairs",
     "guess_pair",
     "guess_source_columns",
+    "looks_like_abbreviation_column",
     "looks_like_header_row",
     "suggest_output_column",
 ]
@@ -141,12 +143,94 @@ _FILL_SOURCE_HINTS = (
 def guess_source_columns(columns: Sequence[str]) -> list:
     """Suggest columns that probably contain names worth abbreviating.
 
-    Used only to pre-tick the multiselect in the filler; the user is always
-    free to tick or untick anything.
+    Used only as a suggestion in the filler; the user is always free to
+    pick anything.  Abbreviation (target) columns are never suggested as
+    sources.
     """
     matches = []
     for column in columns:
+        if looks_like_abbreviation_column(column):
+            continue
         lowered = str(column).strip().lower()
         if any(hint in lowered for hint in _FILL_SOURCE_HINTS):
             matches.append(str(column))
     return matches
+
+
+# ---------------------------------------------------------------------------
+# "source column -> existing abbreviation column" pairs
+# ---------------------------------------------------------------------------
+_TARGET_SUFFIXES = (
+    "abbreviation",
+    "abbrev",
+    "abbr",
+    "short form",
+    "short name",
+    "short",
+    "acronym",
+    "code",
+)
+
+_TARGET_SUFFIX_RE = re.compile(
+    r"[\s_\-.(\[]*"
+    r"(abbreviation|abbrev|abbr|short\s+form|short\s+name|short|acronym|code)"
+    r"\.?\s*[)\]]*$",
+    re.IGNORECASE,
+)
+
+
+def _normalised_name(name: object) -> str:
+    text = str(name).strip().lower().replace("_", " ").replace("-", " ")
+    text = re.sub(r"[.()\]]+$", "", text.strip())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def looks_like_abbreviation_column(column: object) -> bool:
+    """True for names like ``Equipment Abbr`` or just ``Abbreviation``."""
+    normalised = _normalised_name(column)
+    if not normalised:
+        return False
+    return normalised in _TARGET_SUFFIXES or any(
+        normalised.endswith(f" {suffix}") for suffix in _TARGET_SUFFIXES
+    )
+
+
+def guess_fill_pairs(columns: Sequence[str]) -> list:
+    """Suggest ``(source, target)`` pairs for the column filler.
+
+    A *target* is an existing abbreviation-looking column
+    (``… Abbr``, ``… Abbreviation``, ``… Code`` …).  Its source is, in
+    order of preference: the column named like the target without the
+    suffix (``Equipment Description Abbr`` -> ``Equipment Description``),
+    the nearest plain column before it, then the nearest one after it.
+
+    Suggestions only - the user confirms or changes every pair.
+    """
+    names = [str(column) for column in columns]
+    by_normalised = {}
+    for name in names:
+        by_normalised.setdefault(_normalised_name(name), name)
+
+    pairs: list = []
+    used_sources: set = set()
+    for index, target in enumerate(names):
+        if not looks_like_abbreviation_column(target):
+            continue
+
+        source = None
+        base = _TARGET_SUFFIX_RE.sub("", target).strip(" _-.()[]")
+        if base:
+            candidate = by_normalised.get(_normalised_name(base))
+            if candidate is not None and candidate != target:
+                source = candidate
+        if source is None:  # nearest plain column before, then after
+            neighbours = list(reversed(names[:index])) + names[index + 1:]
+            source = next(
+                (name for name in neighbours if not looks_like_abbreviation_column(name)),
+                None,
+            )
+        if source is None or source in used_sources:
+            continue
+        used_sources.add(source)
+        pairs.append((source, target))
+    return pairs

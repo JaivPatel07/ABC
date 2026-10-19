@@ -143,14 +143,19 @@ ABBREVIATIONS = [
 
 
 def build_equipment_frame() -> pd.DataFrame:
+    # The empty "… Abbr" columns are the *targets*: the filler writes the
+    # abbreviation into the existing column, it never creates a new one.
     rows = []
     for index, (section, description, parameter, quantity, remark) in enumerate(EQUIPMENT_ROWS, start=1):
         rows.append(
             {
                 "Sr No": index,
                 "Plant Section": section,
+                "Plant Section Abbr": "",
                 "Equipment Description": description,
+                "Equipment Description Abbr": "",
                 "Parameter": parameter,
+                "Parameter Abbr": "",
                 "Qty": quantity,
                 "Remarks": remark,
             }
