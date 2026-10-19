@@ -1,0 +1,68 @@
+Word / Phrase,Approved Abbreviation,Category
+Cooling Tower,CT,Equipment
+Cooling Water,CW,System
+Boiler,BLR,Equipment
+Boiler Feed Water,BFW,System
+Feed Water,FW,System
+Feed,FD,General
+Water,WTR,General
+Pump,PMP,Equipment
+Primary Air,PA,System
+Forced Draft,FD,System
+Induced Draft,ID,System
+Fan,FAN,Equipment
+Air,AIR,General
+Steam,STM,General
+Drum,DRM,Equipment
+Level,LVL,Parameter
+Transmitter,TX,Instrument
+Level Transmitter,LT,Instrument
+Pressure,PR,Parameter
+Indicator,IND,Instrument
+Pressure Indicator,PI,Instrument
+Temperature,TMP,Parameter
+Gauge,GA,Instrument
+Temperature Gauge,TG,Instrument
+Tank,TNK,Equipment
+Storage Tank,STK,Equipment
+Raw Water,RW,System
+DM Water,DMW,System
+Flue Gas,FG,System
+Flue Gas Desulphurisation,FGD,System
+Unit,UNT,General
+Electrostatic Precipitator,ESP,Equipment
+Ash,ASH,Material
+Ash Handling,AH,System
+Handling,HND,General
+Conveyor,CNV,Equipment
+Turbine,TUR,Equipment
+Lube Oil,LO,System
+Oil,OIL,Material
+Cooler,CLR,Equipment
+Compressor,CMP,Equipment
+Discharge,DIS,General
+Suction,SUC,General
+Instrument,INST,General
+Instrument Air,IA,System
+Receiver,RCV,Equipment
+Effluent Treatment Plant,ETP,System
+Treatment,TRT,General
+Fire Water,FWP,System
+Fire,FIR,General
+Water Treatment Plant,WTP,System
+Power House,PH,Area
+Boiler House,BH,Area
+Plant,PLT,General
+Motor,MTR,Equipment
+Valve / Valves,VLV,Equipment
+Control Valve,CV,Equipment
+Panel,PNL,Electrical
+Switchgear,SG,Electrical
+Transformer,TRF,Electrical
+Emergency,EMG,General
+Standby,STB,General
+North,N,Direction
+South,S,Direction
+pump,PMP,duplicate of 'Pump' - ignored
+Cooling Tower,CT,duplicate entry - ignored
+,,blank row - ignored

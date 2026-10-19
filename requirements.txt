@@ -1,0 +1,9 @@
+# TagForge - industrial tag-name generator
+# Install with:  python -m pip install -r requirements.txt
+
+streamlit>=1.30        # web interface
+pandas>=2.0            # data processing
+openpyxl>=3.1          # reading and writing .xlsx files
+
+# --- only needed if you want to run the test suite -------------------------
+pytest>=7.0
