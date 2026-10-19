@@ -42,6 +42,7 @@ from ..taggen import TagGenerator
 from ..text_utils import phrase_key, to_text
 from .widgets import (
     chips,
+    display_frame,
     full_width,
     column_picker,
     download_button,
@@ -77,10 +78,17 @@ def render_sidebar(state) -> None:
     with st.sidebar:
         st.divider()
         current = int(state.get("step", 1) or 1)
+        # Initialise the widget's session-state value once instead of passing
+        # ``index``.  Callbacks may update ``step_nav`` before the rerun, and
+        # Streamlit warns when a widget has both a default and a value set
+        # through the Session State API.
+        if "step_nav" not in st.session_state:
+            st.session_state["step_nav"] = STEPS[
+                min(max(current - 1, 0), len(STEPS) - 1)
+            ]
         choice = st.radio(
             "Steps",
             options=STEPS,
-            index=min(current - 1, len(STEPS) - 1),
             key="step_nav",
             label_visibility="collapsed",
         )
@@ -330,7 +338,7 @@ def _step_upload_data(state) -> None:
         note(f"Large file: {len(frame):,} rows. Only the first rows are shown here, but the "
              f"export always contains every row.", "info")
 
-    st.dataframe(frame.head(25), **full_width(st.dataframe), hide_index=True)
+    st.dataframe(display_frame(frame.head(25)), **full_width(st.dataframe), hide_index=True)
     _next_button(state, "Next: abbreviation list", enabled=frame is not None)
 
 
@@ -409,7 +417,7 @@ def _step_abbreviations(state) -> None:
 
     if not phrase_col or not abbr_col:
         note("Select both columns so the abbreviations can be loaded.", "warning")
-        st.dataframe(frame.head(15), **full_width(st.dataframe), hide_index=True)
+        st.dataframe(display_frame(frame.head(15)), **full_width(st.dataframe), hide_index=True)
         return
 
     if phrase_col == abbr_col:
@@ -466,7 +474,7 @@ def _render_table_summary(state, frame: Optional[pd.DataFrame] = None) -> None:
 
     if frame is not None:
         with st.expander("Preview of the abbreviation file"):
-            st.dataframe(frame.head(30), **full_width(st.dataframe), hide_index=True)
+            st.dataframe(display_frame(frame.head(30)), **full_width(st.dataframe), hide_index=True)
 
     with st.expander(f"Show all {len(table):,} loaded abbreviations"):
         search = st.text_input("Filter", key="abbr_filter", placeholder="type to search…")
@@ -1088,7 +1096,7 @@ def _step_export(state) -> None:
 
     output_frame = build_output_frame(frame, result.tags, config, state.target_col)
     st.markdown(f"**Result: {len(output_frame):,} rows × {len(output_frame.columns)} columns**")
-    st.dataframe(output_frame.head(20), **full_width(st.dataframe), hide_index=True)
+    st.dataframe(display_frame(output_frame.head(20)), **full_width(st.dataframe), hide_index=True)
 
     meta = default_meta(
         data_file=getattr(state, "data_file_name", ""),
