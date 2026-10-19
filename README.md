@@ -1,7 +1,19 @@
-# 🏷️ TagForge — Industrial Tag Name Generator
+# 🏷️ TagForge — Abbreviation Filler & Tag Name Generator
 
-Turn long equipment / section / parameter descriptions into standard tag names
-using **your company's own abbreviation list**.
+One app, **your company's own abbreviation list**, two ways to use it.
+
+**Fill abbreviations into columns** — upload the main sheet and the abbreviation
+list, tick the columns that need a short form, download the same sheet with a new
+abbreviation column next to each one. A value that is **not** in the list stays
+**empty** — the original text is never copied into the new column.
+
+```
+Plant Section      →  Plant Section Abbr     Equipment Description     →  Equipment Description Abbr
+Power House           PH                     Cooling Tower No 2           CT
+Boiler House          BH                     Agitator                     (empty)
+```
+
+**Generate tag names** — build a complete tag from a naming template:
 
 ```
 "Cooling Tower No 2"                 →  CT_NO_2
@@ -10,22 +22,24 @@ using **your company's own abbreviation list**.
 ```
 
 Runs **100 % locally** — no internet, no API keys, no AI service. Your uploaded
-file is only ever read; results are offered as a download.
+files are only ever read; results are offered as a download.
 
 ---
 
 ## Contents
 
 1. [What it does (and what it never does)](#what-it-does-and-what-it-never-does)
-2. [Install and run on Windows (step by step)](#install-and-run-on-windows-step-by-step)
-3. [Install on macOS / Linux](#install-on-macos--linux)
-4. [Project structure](#project-structure)
-5. [How to use the app — the 8 steps](#how-to-use-the-app--the-8-steps)
-6. [The naming template](#the-naming-template)
-7. [Sample files](#sample-files)
-8. [Running the tests](#running-the-tests)
-9. [Troubleshooting](#troubleshooting)
-10. [Design notes](#design-notes)
+2. [The two modes](#the-two-modes)
+3. [Mode 1 — fill abbreviations into columns](#mode-1--fill-abbreviations-into-columns-4-steps)
+4. [Install and run on Windows (step by step)](#install-and-run-on-windows-step-by-step)
+5. [Install on macOS / Linux](#install-on-macos--linux)
+6. [Project structure](#project-structure)
+7. [Mode 2 — the tag-name generator (8 steps)](#mode-2--the-tag-name-generator-8-steps)
+8. [The naming template](#the-naming-template)
+9. [Sample files](#sample-files)
+10. [Running the tests](#running-the-tests)
+11. [Troubleshooting](#troubleshooting)
+12. [Design notes](#design-notes)
 
 ---
 
@@ -37,6 +51,12 @@ file is only ever read; results are offered as a download.
 - lists every worksheet and every column **found in your file** — you choose
 - matches **multi-word phrases** (`Cooling Tower` → `CT`) and always prefers the
   **longest** match
+- fills **any number of columns in one run** — each chosen column gets its own
+  abbreviation column right next to it
+- leaves the new cell **empty** when a value is not in the list (the original
+  text is never copied into it)
+- offers three matching rules: *any match in the cell*, *whole cell must match*,
+  *every word must match*
 - lets you add, edit or remove abbreviation mappings
 - builds tags from a **naming template you configure** (separator, casing,
   prefix, suffix, row number, other columns…)
@@ -50,10 +70,73 @@ file is only ever read; results are offered as a download.
 **Never**
 
 - ❌ hardcodes a column name, column position, equipment name or abbreviation
-- ❌ invents an abbreviation that is not in your list (unknown words are kept
-  as typed **and reported**)
+- ❌ invents an abbreviation that is not in your list (the filler leaves the
+  cell **empty**; the tag wizard keeps unknown words as typed **and reports
+  them**)
 - ❌ modifies, moves or overwrites your source file
 - ❌ needs internet access or a paid service
+
+---
+
+## The two modes
+
+Pick the mode at the top of the sidebar. Uploaded files and the abbreviation
+list are **shared** between the modes, so you only upload them once.
+
+| Mode | What it is for | Steps |
+| ---- | -------------- | ----- |
+| **Fill abbreviations into columns** | Fill one or many columns of an existing sheet with short forms. Unmatched values stay empty. | 4 |
+| **Tag name generator** | Build a complete tag name (prefix, separator, row number, other columns…) from one text column. | 8 |
+
+---
+
+## Mode 1 — fill abbreviations into columns (4 steps)
+
+This is the fast path when your main sheet already has all the data and you only
+want the approved short form next to each value.
+
+| Step | What you do |
+| ---- | ----------- |
+| **1. Upload the main Excel file** | Choose the `.xlsx`/`.xlsm`/`.csv` file with all your data. Pick the worksheet and header row if needed. Every column found in the file is shown. |
+| **2. Upload the abbreviation list** | Upload the **one** list used for every column and say which column holds the word/phrase and which holds the abbreviation. |
+| **3. Choose columns to fill** | Tick every column that needs a short form (e.g. `Equipment Description`, `Parameter`, `Plant Section`). A new column is added next to each one. You can rename each new column; the matching rule you pick applies to all of them. |
+| **4. Preview and download** | Check the summary and the preview, then download the workbook (plus a summary / *not found* report and a CSV if you want). |
+
+### Matching rules
+
+| Rule | Meaning | `Cooling Tower No 2` | `Cooling Tower` |
+| ---- | ------- | -------------------- | --------------- |
+| **Any match** (default) | The longest phrase found **anywhere** in the cell wins; the rest of the cell is ignored. | `CT` | `CT` |
+| **Whole cell must match exactly** | The complete cell must be a phrase from the list. | *(empty)* | `CT` |
+| **Every word must match** | Every word must be in the list; the abbreviations are joined. One unknown word empties the cell (numbers can be kept). | `CT_NO_2` | `CT` |
+
+Phrases are matched case-insensitively and regardless of extra spaces or
+punctuation, so `  cooling   TOWER ` and `Cooling Tower` are the same value.
+Simple plurals (`Pumps` → `Pump`) can be switched on; they are off by default.
+
+### What happens when there is no abbreviation?
+
+By default the new cell is **left empty** — the original text is **not** copied
+into it and the source column is **not** changed. A *Not Found* report lists
+every value that had no abbreviation, with its count and first row, so you can
+add the missing entries to your list and run it again.
+
+If you prefer to keep the original text for unmatched values, there is an option
+for that in step 3. The default is empty, exactly as described above.
+
+### Example
+
+Main file (unchanged) and the two new columns created by the filler:
+
+| Plant Section | **Plant Section Abbr** | Equipment Description | **Equipment Description Abbr** | Parameter | **Parameter Abbr** |
+| ------------- | ---------------------- | --------------------- | ------------------------------ | --------- | ------------------ |
+| Power House | `PH` | Cooling Tower No 2 | `CT` | Temperature | `TMP` |
+| Boiler House | `BH` | Boiler Feed Water Pump B | `BFW` | Flow | *(empty)* |
+| Boiler House | `BH` | Agitator | *(empty)* | Pressure | `PR` |
+
+The original columns are kept exactly as they are; the abbreviation columns are
+inserted directly after the column they belong to. If a name you type already
+exists, ` (2)` is appended so an existing column can never be overwritten.
 
 ---
 
@@ -140,6 +223,7 @@ TagForge/
 │   ├── __init__.py             # public API (import shortcuts)
 │   ├── text_utils.py           # cleaning + tokenising text
 │   ├── abbreviations.py        # the abbreviation list and phrase matching
+│   ├── column_fill.py          # fills columns; empty cell when no match
 │   ├── config.py               # NamingConfig: template, separators, casing
 │   ├── taggen.py               # text -> tag name
 │   ├── validation.py           # empty / unknown / duplicate / invalid checks
@@ -149,9 +233,11 @@ TagForge/
 │   ├── io_utils.py             # dynamic .xlsx / .csv reading and writing
 │   ├── detect.py               # column *hints* for dropdown defaults
 │   └── ui/
+│       ├── modes.py            # the two modes and the sidebar switch
+│       ├── fill_pages.py       # the four column-filler steps
 │       ├── state.py            # namespaced session state
 │       ├── widgets.py          # small reusable Streamlit widgets
-│       └── pages.py            # the eight wizard steps
+│       └── pages.py            # the eight tag-wizard steps
 │
 ├── samples/                    # fictional test data
 │   ├── equipment_data.xlsx     # 29 rows, 2 worksheets
@@ -162,7 +248,7 @@ TagForge/
 ├── scripts/
 │   └── generate_samples.py     # recreates the sample files
 │
-└── tests/                      # pytest suite (79 tests)
+└── tests/                      # pytest suite (114 tests)
     ├── test_text_utils.py
     ├── test_abbreviations.py
     ├── test_phrase_matching.py
@@ -170,7 +256,8 @@ TagForge/
     ├── test_tag_generation.py
     ├── test_validation.py
     ├── test_pipeline_export.py
-    └── test_streamlit_app.py
+    ├── test_column_fill.py     # the abbreviation filler engine + export
+    └── test_streamlit_app.py   # both modes, headless
 ```
 
 The engine (`tagforge/*.py`) has **no Streamlit dependency** — you can import it
@@ -190,9 +277,28 @@ result = run_pipeline(df, "Equipment Description", table, config)
 df["Generated_Tag"] = result.tags
 ```
 
+The column filler is just as scriptable:
+
+```python
+from tagforge import FillConfig, FillMapping, run_column_fill
+
+result = run_column_fill(
+    df,
+    table,
+    [FillMapping("Equipment Description"), FillMapping("Parameter")],
+    FillConfig(),  # "Any match" + empty cell when nothing is found
+)
+
+print(result.output_frame[["Equipment Description", "Equipment Description Abbr"]].head())
+result.not_found_cells   # how many cells stayed empty
+```
+
 ---
 
-## How to use the app — the 8 steps
+## Mode 2 — the tag-name generator (8 steps)
+
+Switch to **Tag name generator** at the top of the sidebar. This mode builds one
+complete tag from a template instead of just filling a short form.
 
 | Step | What you do |
 | ---- | ----------- |
@@ -265,6 +371,12 @@ Plants”) and safe to use for a first test:
   `Word / Phrase` / `Approved Abbreviation` / `Category`, including multi-word
   phrases, a `Valve / Valves` entry and two duplicate rows (reported on load).
 
+They also work for the filler: upload `equipment_data.xlsx` as the main file and
+`company_abbreviations.csv` as the list, then tick `Plant Section`,
+`Equipment Description` and `Parameter`. You will see filled cells for known
+values and empty cells for `Flow`, `Agitator`, `Chiller`, `Diesel` and the other
+words that are deliberately missing from the list.
+
 Recreate them at any time with:
 
 ```bash
@@ -282,8 +394,10 @@ python -m pytest -q
 
 The suite covers abbreviation matching, phrase (longest-match) matching,
 unknown words, tag generation (templates, separators, casing, truncation),
-validation (empty, duplicates, invalid characters), file import/export
-round-trips and a headless run of every wizard step (`streamlit.testing`).
+validation (empty, duplicates, invalid characters), the column filler (all three
+matching rules, empty cells, output column placement, reports), file
+import/export round-trips and a headless run of every step of both modes
+(`streamlit.testing`).
 
 ---
 
@@ -294,6 +408,9 @@ round-trips and a headless run of every wizard step (`streamlit.testing`).
 | *"'x.xls' is not a supported file type"* | Open it in Excel and **Save As → Excel Workbook (.xlsx)**. |
 | *"… could not be read"* | Close the file in Excel (Excel locks open files) and try again. |
 | Wrong column names shown | Change **Header row** (step 1) to the row that actually holds the column names. |
+| Filler leaves almost everything empty | Check that the right phrase / abbreviation columns are selected in step 2, and try the *Any match* rule in step 3. |
+| Filler fills a word I did not expect | *Any match* takes the longest phrase **anywhere** in the cell. Use *Whole cell must match exactly* for a strict match. |
+| Filler should keep the original text for missing values | Change *When no abbreviation is found* in step 3 (the default is empty). |
 | Every word is “unmatched” | Check you selected the right **phrase** and **abbreviation** columns in step 2. |
 | Tag contains words I expected to be abbreviated | The word is not in your list — see step 6. Longer phrases always win, so check whether a longer phrase overlaps. |
 | Tags are too long | Set *Maximum tag length* in step 4 (advanced section). |
@@ -304,9 +421,14 @@ round-trips and a headless run of every wizard step (`streamlit.testing`).
 
 ## Design notes
 
-- **No guessing.** If a word is not in the abbreviation list it is written into
-  the tag as typed and reported on the *Unmatched Words* sheet. The app never
+- **No guessing, two honest behaviours.** In the filler, a value with no entry in
+  the list produces an **empty cell**; the original text is never copied into
+  the new column and a *Not Found* report lists the value. In the tag wizard the
+  unknown word is written into the tag as typed and reported. Neither mode ever
   creates an abbreviation on its own.
+- **Nothing is overwritten by the filler.** New columns are inserted after the
+  source column; a clashing name gets ` (2)` appended, and the source frame is
+  copied before anything is written.
 - **Nothing is hardcoded.** Column names, worksheets, header rows, separators,
   casing and templates all come from the user at runtime. `tagforge/detect.py`
   only *suggests* dropdown defaults.

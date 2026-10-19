@@ -12,6 +12,11 @@ from typing import Dict
 import pandas as pd
 
 from .abbreviations import AbbreviationTable
+from .column_fill import (
+    FillResult,
+    build_fill_not_found_frame,
+    build_fill_summary_frame,
+)
 from .io_utils import dataframe_to_excel_bytes
 from .pipeline import PipelineResult, build_output_frame
 from .reporting import build_report_sheets
@@ -20,6 +25,8 @@ __all__ = [
     "build_processed_workbook",
     "build_report_workbook",
     "build_abbreviations_csv",
+    "build_fill_workbook",
+    "build_fill_report_workbook",
     "default_meta",
 ]
 
@@ -71,3 +78,57 @@ def build_report_workbook(result: PipelineResult, meta: Dict[str, object]) -> by
 def build_abbreviations_csv(table: AbbreviationTable) -> bytes:
     """The abbreviation list including the user's additions, as CSV."""
     return table.to_csv_bytes()
+
+
+# ---------------------------------------------------------------------------
+# column-filler mode
+# ---------------------------------------------------------------------------
+def build_fill_settings_frame(result: FillResult) -> pd.DataFrame:
+    """A short 'what was used' sheet for a fill run."""
+    config = result.config
+    rows = [
+        ("Generated on", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("Rows in the file", result.rows),
+        ("Columns filled", len(result.columns)),
+        ("Cells with an abbreviation", result.filled_cells),
+        ("Cells left empty (no abbreviation)", result.not_found_cells),
+        ("Empty source cells", result.empty_cells),
+        ("Default matching rule", config.match_mode),
+        ("Letter case", config.case),
+        ("When no abbreviation is found", config.when_not_found),
+        ("Match simple plurals", "Yes" if config.allow_plural_matching else "No"),
+        ("Keep numbers in 'every word' mode", "Yes" if config.keep_numbers else "No"),
+        ("Separator between abbreviations", config.separator),
+        ("Abbreviations in the list", len(result.table)),
+    ]
+    return pd.DataFrame(rows, columns=["Setting", "Value"])
+
+
+def _fill_report_sheets(result: FillResult) -> Dict[str, pd.DataFrame]:
+    not_found = build_fill_not_found_frame(result)
+    if not_found.empty:
+        not_found = pd.DataFrame(
+            [{"Info": "Every value found an abbreviation in the list."}]
+        )
+    return {
+        "Summary": build_fill_summary_frame(result),
+        "Not Found": not_found,
+        "Run Settings": build_fill_settings_frame(result),
+    }
+
+
+def build_fill_workbook(
+    result: FillResult,
+    data_sheet_name: str = "Filled Data",
+    include_report: bool = True,
+) -> bytes:
+    """The main deliverable of the filler: original data + abbreviation columns."""
+    sheets: Dict[str, pd.DataFrame] = {data_sheet_name: result.output_frame}
+    if include_report:
+        sheets.update(_fill_report_sheets(result))
+    return dataframe_to_excel_bytes(sheets)
+
+
+def build_fill_report_workbook(result: FillResult) -> bytes:
+    """Standalone summary / not-found report for a fill run."""
+    return dataframe_to_excel_bytes(_fill_report_sheets(result))
