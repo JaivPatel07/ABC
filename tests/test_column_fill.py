@@ -53,13 +53,13 @@ def frame() -> pd.DataFrame:
 # matching rules
 # ---------------------------------------------------------------------------
 def test_any_match_takes_the_longest_phrase_anywhere(frame, sample_table):
-    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig(match_mode=MATCH_ANY))
     assert result.output_frame["Equipment Abbr"].tolist() == ["CT", "BFW", "", ""]
 
 
 def test_any_match_ignores_unknown_words_before_the_match(sample_table):
     frame = pd.DataFrame({"Equipment": ["Scrubber Recirculation Pump"]})
-    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig(match_mode=MATCH_ANY))
     assert result.output_frame["Equipment Abbr"].tolist() == ["PMP"]
 
 
@@ -182,11 +182,11 @@ def test_empty_output_name_falls_back_to_the_suffix(frame, sample_table):
 # ---------------------------------------------------------------------------
 def test_letter_case_setting(frame, sample_table):
     lower = run_column_fill(
-        frame, sample_table, [FillMapping("Equipment")], FillConfig(case=CASE_LOWER)
+        frame, sample_table, [FillMapping("Equipment")], FillConfig(case=CASE_LOWER, match_mode=MATCH_ANY)
     )
     assert lower.output_frame["Equipment Abbr"].iloc[0] == "ct"
     upper = run_column_fill(
-        frame, sample_table, [FillMapping("Equipment")], FillConfig(case=CASE_UPPER)
+        frame, sample_table, [FillMapping("Equipment")], FillConfig(case=CASE_UPPER, match_mode=MATCH_ANY)
     )
     assert upper.output_frame["Equipment Abbr"].iloc[0] == "CT"
 
@@ -263,7 +263,7 @@ def test_not_found_report_is_empty_when_everything_matches(sample_table):
 
 
 def test_fill_workbook_round_trip(frame, sample_table):
-    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig(match_mode=MATCH_ANY))
     data = build_fill_workbook(result)
     assert data[:2] == b"PK"
 
@@ -298,7 +298,7 @@ def test_statuses_are_reported(frame, sample_table):
 
 def test_any_match_prefers_the_longest_phrase_then_the_earliest(table):
     frame = pd.DataFrame({"Text": ["Tower Cooling", "Cooling Tower"]})
-    result = run_column_fill(frame, table, [FillMapping("Text")], FillConfig())
+    result = run_column_fill(frame, table, [FillMapping("Text")], FillConfig(match_mode=MATCH_ANY))
     # "Tower" (1 word) and "Cooling" (1 word) are both matches in the first
     # cell -> the earliest one wins. In the second cell "Cooling Tower" (2
     # words) beats both single words.

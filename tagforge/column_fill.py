@@ -10,7 +10,7 @@ generator in :mod:`tagforge.taggen`:
   **never copied into the new column**; the cell is left empty instead,
 * the source column is never modified.
 
-Three matching rules are available (chosen by the user):
+Four matching rules are available (chosen by the user):
 
 ``MATCH_ANY``
     The longest phrase found anywhere in the cell wins.  "Cooling Tower No 2"
@@ -22,6 +22,10 @@ Three matching rules are available (chosen by the user):
     Every word of the cell must be in the list and the abbreviations are joined
     with a separator.  "Boiler Feed Water Pump" -> ``BFW_PMP``; one unknown
     word makes the whole cell empty.
+``MATCH_WORDWISE``
+    Every phrase is replaced by its abbreviation and the sentence is rebuilt.
+    "Cooling Tower No 2" -> ``CT NO 2`` (or ``CT_NO_2`` depending on the
+    separator).  Unknown words can be kept, dropped or make the cell empty.
 """
 
 from __future__ import annotations
@@ -40,11 +44,16 @@ __all__ = [
     "MATCH_ANY",
     "MATCH_EXACT",
     "MATCH_ALL_WORDS",
+    "MATCH_WORDWISE",
     "MATCH_MODES",
     "CASE_OPTIONS",
     "NOT_FOUND_BLANK",
     "NOT_FOUND_KEEP",
     "NOT_FOUND_OPTIONS",
+    "WORDWISE_KEEP",
+    "WORDWISE_DROP",
+    "WORDWISE_EMPTY",
+    "WORDWISE_UNKNOWN_OPTIONS",
     "STATUS_FILLED",
     "STATUS_NOT_FOUND",
     "STATUS_EMPTY",
@@ -69,7 +78,8 @@ __all__ = [
 MATCH_ANY = "Any match in the cell (longest phrase)"
 MATCH_EXACT = "Whole cell must match exactly"
 MATCH_ALL_WORDS = "Every word must match"
-MATCH_MODES: Tuple[str, ...] = (MATCH_ANY, MATCH_EXACT, MATCH_ALL_WORDS)
+MATCH_WORDWISE = "Abbreviate each word/phrase (rebuild sentence)"
+MATCH_MODES: Tuple[str, ...] = (MATCH_ANY, MATCH_EXACT, MATCH_ALL_WORDS, MATCH_WORDWISE)
 
 CASE_OPTIONS: Tuple[str, ...] = (CASE_PRESERVE, CASE_UPPER, CASE_LOWER)
 
@@ -77,6 +87,12 @@ CASE_OPTIONS: Tuple[str, ...] = (CASE_PRESERVE, CASE_UPPER, CASE_LOWER)
 NOT_FOUND_BLANK = "Leave the cell empty"
 NOT_FOUND_KEEP = "Keep the original text"
 NOT_FOUND_OPTIONS: Tuple[str, ...] = (NOT_FOUND_BLANK, NOT_FOUND_KEEP)
+
+# how to handle unknown words in WORDWISE mode
+WORDWISE_KEEP = "Keep original word"
+WORDWISE_DROP = "Drop unknown words"
+WORDWISE_EMPTY = "Leave cell empty if any word is unknown"
+WORDWISE_UNKNOWN_OPTIONS: Tuple[str, ...] = (WORDWISE_KEEP, WORDWISE_DROP, WORDWISE_EMPTY)
 
 # per-cell status values (also used in the report tables)
 STATUS_FILLED = "Filled"
@@ -113,13 +129,14 @@ class FillMapping:
 class FillConfig:
     """Settings shared by every column of one fill run."""
 
-    match_mode: str = MATCH_ANY
+    match_mode: str = MATCH_WORDWISE
     case: str = CASE_PRESERVE
-    separator: str = "_"  # only used by MATCH_ALL_WORDS
+    separator: str = " "  # used by MATCH_ALL_WORDS and MATCH_WORDWISE
     allow_plural_matching: bool = False
-    keep_numbers: bool = True  # only used by MATCH_ALL_WORDS
+    keep_numbers: bool = True  # used by MATCH_ALL_WORDS and MATCH_WORDWISE
     when_not_found: str = NOT_FOUND_BLANK
     output_suffix: str = " Abbr"
+    wordwise_unknown: str = WORDWISE_KEEP  # only used by MATCH_WORDWISE
 
     def effective_mode(self) -> str:
         return self.match_mode if self.match_mode in MATCH_MODES else MATCH_ANY
@@ -136,12 +153,16 @@ class FillConfig:
             problems.append("The selected matching rule is not known - 'Any match' will be used.")
         if self.case not in CASE_OPTIONS:
             problems.append("The selected letter case is not known - the abbreviation is kept as listed.")
-        if self.match_mode == MATCH_ALL_WORDS and not (self.separator or "").strip():
-            problems.append(
-                "The separator is empty, so abbreviations of several words would run together (BFWPMP)."
-            )
+        if self.match_mode in (MATCH_ALL_WORDS, MATCH_WORDWISE) and not (self.separator or "").strip():
+            # allow single space as valid separator, so check stripped length
+            if self.separator == "":
+                problems.append(
+                    "The separator is empty, so abbreviations of several words would run together (BFWPMP)."
+                )
         if self.when_not_found not in NOT_FOUND_OPTIONS:
             problems.append("Unknown 'when no abbreviation is found' option - cells will be left empty.")
+        if self.match_mode == MATCH_WORDWISE and self.wordwise_unknown not in WORDWISE_UNKNOWN_OPTIONS:
+            problems.append("Unknown 'unknown word' option - original words will be kept.")
         return problems
 
 
@@ -258,6 +279,7 @@ def find_match(
     allow_plural_matching: bool = False,
     separator: str = "_",
     keep_numbers: bool = True,
+    wordwise_unknown: str = WORDWISE_KEEP,
 ) -> Optional[MatchResult]:
     """Find the abbreviation for one cell.  ``None`` means "no match".
 
@@ -301,6 +323,51 @@ def find_match(
         if not abbreviations:
             return None
         joined = separator.join(abbreviations)
+        return MatchResult(" ".join(phrases), joined, 0, len(keys))
+
+    if mode == MATCH_WORDWISE:
+        # Greedy longest-phrase walk: every token/phrase that has an
+        # abbreviation is replaced, the rest is handled by the unknown-word
+        # setting.  Pieces are joined with *separator* to rebuild a sentence.
+        # This fixes the bug where "Cooling Tower No 2" only returned "CT".
+        out_parts: List[str] = []
+        phrases: List[str] = []
+        has_abbreviation = False
+        has_unknown = False
+        index = 0
+        while index < len(keys):
+            hit = table.lookup(keys, index, allow_plurals=allow_plural_matching)
+            if hit is not None:
+                size, abbreviation, phrase = hit
+                if abbreviation == DROP_MARKER:
+                    index += size
+                    continue
+                out_parts.append(abbreviation)
+                phrases.append(phrase)
+                has_abbreviation = True
+                index += size
+                continue
+            token = tokens[index]
+            if keep_numbers and token.kind == "number":
+                out_parts.append(token.text)
+                index += 1
+                continue
+            if wordwise_unknown == WORDWISE_DROP:
+                has_unknown = True
+                index += 1
+                continue
+            if wordwise_unknown == WORDWISE_EMPTY:
+                return None
+            # WORDWISE_KEEP (default): keep original word
+            out_parts.append(token.text)
+            has_unknown = True
+            index += 1
+
+        if not out_parts:
+            return None
+        if not has_abbreviation and has_unknown:
+            return None
+        joined = separator.join(out_parts)
         return MatchResult(" ".join(phrases), joined, 0, len(keys))
 
     # MATCH_ANY: the longest phrase anywhere in the cell wins; on a tie the
@@ -412,6 +479,7 @@ def run_column_fill(
                     allow_plural_matching=config.allow_plural_matching,
                     separator=config.separator,
                     keep_numbers=config.keep_numbers,
+                    wordwise_unknown=config.wordwise_unknown,
                 )
                 if match is not None:
                     cells.append(

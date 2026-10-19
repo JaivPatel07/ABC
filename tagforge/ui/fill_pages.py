@@ -26,7 +26,9 @@ from ..column_fill import (
     CASE_OPTIONS,
     MATCH_ALL_WORDS,
     MATCH_MODES,
+    MATCH_WORDWISE,
     NOT_FOUND_OPTIONS,
+    WORDWISE_UNKNOWN_OPTIONS,
     FillConfig,
     FillMapping,
     FillResult,
@@ -382,25 +384,51 @@ def _step_fill_columns(state) -> None:
 
     mappings: List[FillMapping] = []
     if selected:
-        st.markdown("**New column names and matching rule**")
+        st.markdown("**New column names and per-column matching rule**")
         st.caption(
-            "Every selected column uses the matching rule above. A name that already "
-            "exists gets ` (2)` appended - an existing column is never overwritten. "
+            "Each ticked column gets its own abbreviation column right next to it. "
+            "A name that already exists gets ` (2)` appended - an existing column is never overwritten. "
+            "You can give each column its own matching rule - by default they use the rule chosen above. "
             "Changing the suffix rebuilds the suggested names."
+        )
+        # Allow per-column matching rule override
+        per_column_mode: dict = {}
+        # Load previous per-column choices if any
+        prev_mappings = {m.source: m for m in (state.fill_mappings or [])}
+        st.info(
+            "💡 **Tip:** Use *Abbreviate each word/phrase (rebuild sentence)* to turn every word in a cell "
+            "into its abbreviation and rebuild the sentence, e.g. `Cooling Tower No 2` → `CT NO 2`. "
+            "The old *Any match* only keeps the longest phrase (`CT`).",
+            icon="ℹ️",
         )
         taken: List[str] = list(columns)
         for source in selected:
             default_name = unique_column_name(taken, f"{source}{config.output_suffix}")
             taken.append(default_name)
-            output = st.text_input(
-                f"New column for '{source}'",
-                value=default_name,
-                # the suffix is part of the key, so changing the suffix rebuilds
-                # the suggested names instead of keeping old widget values
-                key=f"fill_out::{source}::{config.output_suffix}",
-                help="Leave the name empty to use the automatic name.",
-            )
-            mappings.append(FillMapping(source=source, output=to_text(output)))
+            col1, col2 = st.columns([1.2, 1])
+            with col1:
+                output = st.text_input(
+                    f"New column for '{source}'",
+                    value=prev_mappings.get(source, FillMapping(source, output=default_name)).output or default_name,
+                    # the suffix is part of the key, so changing the suffix rebuilds
+                    # the suggested names instead of keeping old widget values
+                    key=f"fill_out::{source}::{config.output_suffix}",
+                    help="Leave the name empty to use the automatic name.",
+                )
+            with col2:
+                # per-column matching rule - defaults to global config
+                prev_mode = prev_mappings.get(source, FillMapping(source)).match_mode or config.match_mode
+                if prev_mode not in MATCH_MODES:
+                    prev_mode = config.match_mode
+                mode = st.selectbox(
+                    f"Rule for '{source}'",
+                    options=list(MATCH_MODES),
+                    index=list(MATCH_MODES).index(prev_mode),
+                    key=f"fill_mode::{source}",
+                    help="Override the global rule for this column only.",
+                )
+                per_column_mode[source] = mode
+            mappings.append(FillMapping(source=source, output=to_text(output), match_mode=per_column_mode[source]))
 
     state.fill_mappings = mappings
 
@@ -431,8 +459,11 @@ def _render_fill_settings(config: FillConfig) -> FillConfig:
             index=list(MATCH_MODES).index(config.effective_mode()),
             key="fill_cfg_mode",
             help=(
-                "Any match (recommended): the longest phrase found anywhere in the cell "
-                "wins, e.g. 'Cooling Tower No 2' → CT.\n\n"
+                "Abbreviate each word/phrase (recommended): every word/phrase in the cell "
+                "is turned into its abbreviation and the sentence is rebuilt, e.g. "
+                "'Cooling Tower No 2' → 'CT NO 2' and 'Boiler Feed Water Pump B' → 'BFW PMP B'.\n\n"
+                "Any match: the longest phrase found anywhere in the cell wins, e.g. "
+                "'Cooling Tower No 2' → CT (rest ignored).\n\n"
                 "Whole cell: only an exact phrase, e.g. 'Cooling Tower' → CT but "
                 "'Cooling Tower No 2' stays empty.\n\n"
                 "Every word: every word must be in the list, e.g. "
@@ -470,11 +501,14 @@ def _render_fill_settings(config: FillConfig) -> FillConfig:
         )
         separator = config.separator
         keep_numbers = config.keep_numbers
-        if match_mode == MATCH_ALL_WORDS:
+        wordwise_unknown = config.wordwise_unknown
+        if match_mode in (MATCH_ALL_WORDS, MATCH_WORDWISE):
             separator = st.text_input(
                 "Separator between abbreviations",
                 value=config.separator,
                 key="fill_cfg_sep",
+                help="Used to join the abbreviations. Use a single space to rebuild a normal sentence, "
+                "or '_' to build a tag-like value.",
             )
             keep_numbers = st.checkbox(
                 "Keep numbers (2, 3 …) in the result",
@@ -482,7 +516,18 @@ def _render_fill_settings(config: FillConfig) -> FillConfig:
                 key="fill_cfg_keepnumbers",
                 help="With this off, a number without an abbreviation makes the cell empty.",
             )
-        elif config.separator != "_":
+            if match_mode == MATCH_WORDWISE:
+                wordwise_unknown = st.selectbox(
+                    "If a word has no abbreviation",
+                    options=list(WORDWISE_UNKNOWN_OPTIONS),
+                    index=list(WORDWISE_UNKNOWN_OPTIONS).index(config.wordwise_unknown)
+                    if config.wordwise_unknown in WORDWISE_UNKNOWN_OPTIONS else 0,
+                    key="fill_cfg_wordwise_unknown",
+                    help="Keep original word: rebuild the sentence with abbreviations where possible, "
+                    "e.g. 'Scrubber Pump' → 'Scrubber PMP'. Drop: remove unknown words. "
+                    "Empty: leave the whole cell empty if any word is unknown.",
+                )
+        elif config.separator != " ":
             separator = config.separator
 
     return FillConfig(
@@ -493,6 +538,7 @@ def _render_fill_settings(config: FillConfig) -> FillConfig:
         keep_numbers=keep_numbers,
         when_not_found=when_not_found,
         output_suffix=suffix,
+        wordwise_unknown=wordwise_unknown,
     )
 
 

@@ -43,6 +43,13 @@ from .abbreviations import (
     load_table_from_frame,
 )
 from .column_fill import (
+    MATCH_ALL_WORDS,
+    MATCH_ANY,
+    MATCH_EXACT,
+    MATCH_WORDWISE,
+    WORDWISE_DROP,
+    WORDWISE_EMPTY,
+    WORDWISE_KEEP,
     FillConfig,
     FillMapping,
     FillResult,

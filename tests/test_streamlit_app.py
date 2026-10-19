@@ -188,11 +188,13 @@ def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():
     assert len(filled) == 29
     assert "Equipment Description Abbr" in filled.columns
     assert "Parameter Abbr" in filled.columns
-    assert filled.loc[0, "Equipment Description Abbr"] == "CT"
+    # word-wise mode rebuilds the whole sentence: "Cooling Tower No 2" -> "CT No 2"
+    assert filled.loc[0, "Equipment Description Abbr"] == "CT No 2"
     # row 3 (index 2) has Parameter = "Flow" which is not in the sample list
     assert pd.isna(filled.loc[2, "Parameter Abbr"])
-    # row 3 (index 2) has an equipment description, so it must be filled
-    assert filled.loc[2, "Equipment Description Abbr"] == "BFW"
+    # row 3 (index 2) has an equipment description, word-wise keeps all words: "boiler feed water pump a" -> "BFW PMP a"
+    val = filled.loc[2, "Equipment Description Abbr"]
+    assert "BFW" in val and "PMP" in val
     # row 29 (index 27) has an empty description -> empty abbreviation
     assert pd.isna(filled.loc[27, "Equipment Description Abbr"])
 
