@@ -75,9 +75,7 @@ CUSTOM_PRESET = "Custom (type your own)"
 # ===========================================================================
 def render_sidebar(state) -> None:
     with st.sidebar:
-        st.title("TagForge")
-        st.caption("Industrial tag-name generator · works fully offline")
-
+        st.divider()
         current = int(state.get("step", 1) or 1)
         choice = st.radio(
             "Steps",
@@ -124,7 +122,13 @@ def _reset_all(state) -> None:
         "cfg_uniquify", "cfg_maxlen", "cfg_stop", "cfg_dropstop", "cfg_keepnumbers",
         "cfg_plural", "cfg_dedupe", "cfg_collapse", "cfg_trim", "cfg_allowed",
         "cfg_pattern", "cfg_replace", "cfg_indexstart", "cfg_trunc", "editor_preview",
+        "mode_radio",
     ))
+    # The filler mode uses dynamic widget keys (one per selected column), so
+    # remove them by prefix instead of listing every possible name.
+    for key in list(st.session_state.keys()):
+        if key.startswith("fill_"):
+            del st.session_state[key]
 
 
 def render_current_step(state) -> None:
@@ -142,18 +146,38 @@ def render_current_step(state) -> None:
     handlers.get(step, _step_upload_data)(state)
 
 
+def _set_step(state, step: int) -> None:
+    """Jump to ``step`` and keep the sidebar radio in sync.
+
+    This runs as a Streamlit *callback*: callbacks execute before the script is
+    re-run, which is the only safe moment to change the value of a widget that
+    was already created (the sidebar radio).  Without it the radio's old value
+    would immediately overwrite ``state.step`` on the next run.
+    """
+    step = max(1, min(int(step), len(STEPS)))
+    state.step = step
+    st.session_state["step_nav"] = STEPS[step - 1]
+
+
 def _next_button(state, label: str = "Next step", enabled: bool = True) -> None:
     col, _ = st.columns([1, 5])
     with col:
-        if st.button(f"{label} →", disabled=not enabled, **full_width(st.button)):
-            state.step = min(int(state.get("step", 1)) + 1, len(STEPS))
-            st.rerun()
+        st.button(
+            f"{label} →",
+            disabled=not enabled,
+            on_click=_set_step,
+            args=(state, int(state.get("step", 1)) + 1),
+            **full_width(st.button),
+        )
 
 
 def _go_to(state, step: int) -> None:
-    if st.button(f"Go to step {step}", type="primary"):
-        state.step = step
-        st.rerun()
+    st.button(
+        f"Go to step {step}",
+        type="primary",
+        on_click=_set_step,
+        args=(state, step),
+    )
 
 
 # ===========================================================================
@@ -185,10 +209,16 @@ def _store_upload(state, kind: str, uploaded) -> None:
         f"{kind}_sheets",
     )
     if kind == "data":
-        state.clear("target_col", "result", "result_fp", "overrides", "export_bytes", "export_fp")
+        state.clear("target_col", "result", "result_fp", "overrides", "export_bytes", "export_fp",
+                    "fill_mappings", "fill_result", "fill_result_fp",
+                    "fill_export", "fill_export_fp")
+        for widget_key in list(st.session_state.keys()):
+            if widget_key in ("fill_sources",) or widget_key.startswith(("fill_out::", "fill_rule::")):
+                del st.session_state[widget_key]
     if kind == "abbr":
         state.clear("abbr_phrase_col", "abbr_abbr_col", "abbr_signature", "table", "table_report",
-                    "result", "result_fp", "export_bytes", "export_fp")
+                    "result", "result_fp", "export_bytes", "export_fp",
+                    "fill_result", "fill_result_fp", "fill_export", "fill_export_fp")
 
 
 def _load_frame(state, kind: str) -> Optional[pd.DataFrame]:
@@ -212,7 +242,8 @@ def _load_frame(state, kind: str) -> Optional[pd.DataFrame]:
     header_row = header_row_picker(f"{kind}_header", int(getattr(state, f"{kind}_header_row", 0) or 0))
     if header_row != getattr(state, f"{kind}_header_row", 0):
         setattr(state, f"{kind}_header_row", header_row)
-        state.clear("result", "result_fp", "export_bytes", "export_fp")
+        state.clear("result", "result_fp", "export_bytes", "export_fp",
+                    "fill_result", "fill_result_fp", "fill_export", "fill_export_fp")
         if kind == "abbr":
             state.clear("table", "abbr_signature")
 
@@ -228,7 +259,8 @@ def _load_frame(state, kind: str) -> Optional[pd.DataFrame]:
     setattr(state, f"{kind}_frame", frame)
     setattr(state, f"{kind}_columns", columns)
     if previous is not None and previous != columns:
-        state.clear("result", "result_fp", "export_bytes", "export_fp")
+        state.clear("result", "result_fp", "export_bytes", "export_fp",
+                    "fill_result", "fill_result_fp", "fill_export", "fill_export_fp")
     return frame
 
 
@@ -406,7 +438,8 @@ def _load_table(state, frame, phrase_col, abbr_col, expand_slashes) -> Optional[
     state.table = table
     state.table_report = report
     state.abbr_signature = signature
-    state.clear("result", "result_fp", "export_bytes", "export_fp")
+    state.clear("result", "result_fp", "export_bytes", "export_fp",
+                "fill_result", "fill_result_fp", "fill_export", "fill_export_fp")
     return table
 
 

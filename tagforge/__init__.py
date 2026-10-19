@@ -1,4 +1,4 @@
-"""TagForge - turn industrial equipment descriptions into standard tag names.
+"""TagForge - abbreviation filler and industrial tag-name generator.
 
 The package is split into small, testable pieces:
 
@@ -7,6 +7,7 @@ module                       responsibility
 ===========================  ==================================================
 :mod:`tagforge.text_utils`   cleaning and tokenising text
 :mod:`tagforge.abbreviations` the company abbreviation list and phrase matching
+:mod:`tagforge.column_fill`  fill columns; empty cell when there is no match
 :mod:`tagforge.config`       the naming convention (template, separators, case)
 :mod:`tagforge.taggen`       text -> tag name
 :mod:`tagforge.validation`   empty / unknown / duplicate / invalid checks
@@ -16,7 +17,14 @@ module                       responsibility
 :mod:`tagforge.io_utils`     dynamic reading/writing of .xlsx and .csv
 ===========================  ==================================================
 
-Typical use::
+Typical use of the filler::
+
+    from tagforge import FillConfig, FillMapping, run_column_fill
+
+    result = run_column_fill(df, table, [FillMapping("Equipment Description")], FillConfig())
+    result.output_frame          # original columns + "Equipment Description Abbr"
+
+Typical use of the tag wizard::
 
     from tagforge import AbbreviationTable, NamingConfig, run_pipeline
 
@@ -34,6 +42,14 @@ from .abbreviations import (
     LoadReport,
     load_table_from_frame,
 )
+from .column_fill import (
+    FillConfig,
+    FillMapping,
+    FillResult,
+    build_fill_not_found_frame,
+    build_fill_summary_frame,
+    run_column_fill,
+)
 from .config import (
     CASE_LOWER,
     CASE_OPTIONS,
@@ -44,9 +60,11 @@ from .config import (
     TemplateError,
     validate_template,
 )
-from .detect import guess_column, guess_pair
+from .detect import guess_column, guess_pair, guess_source_columns
 from .exporters import (
     build_abbreviations_csv,
+    build_fill_report_workbook,
+    build_fill_workbook,
     build_processed_workbook,
     build_report_workbook,
     default_meta,
@@ -63,9 +81,18 @@ from .reporting import build_report_sheets
 from .taggen import RowResult, TagGenerator
 from .validation import Issue, check_results
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
+    "FillConfig",
+    "FillMapping",
+    "FillResult",
+    "run_column_fill",
+    "build_fill_summary_frame",
+    "build_fill_not_found_frame",
+    "build_fill_workbook",
+    "build_fill_report_workbook",
+    "guess_source_columns",
     "Abbreviation",
     "DROP_MARKER",
     "SOURCE_USER",

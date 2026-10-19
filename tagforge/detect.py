@@ -10,7 +10,13 @@ from __future__ import annotations
 import re
 from typing import Optional, Sequence
 
-__all__ = ["guess_column", "guess_pair", "looks_like_header_row", "suggest_output_column"]
+__all__ = [
+    "guess_column",
+    "guess_pair",
+    "guess_source_columns",
+    "looks_like_header_row",
+    "suggest_output_column",
+]
 
 _PHRASE_HINTS = (
     "full form",
@@ -113,3 +119,34 @@ def suggest_output_column(existing: Sequence[str], default: str = "Generated_Tag
     while f"{default}_{index}" in existing:
         index += 1
     return f"{default}_{index}"
+
+
+_FILL_SOURCE_HINTS = (
+    "equipment",
+    "description",
+    "parameter",
+    "item",
+    "service",
+    "section",
+    "name",
+    "material",
+    "type",
+    "area",
+    "category",
+    "device",
+    "activity",
+)
+
+
+def guess_source_columns(columns: Sequence[str]) -> list:
+    """Suggest columns that probably contain names worth abbreviating.
+
+    Used only to pre-tick the multiselect in the filler; the user is always
+    free to tick or untick anything.
+    """
+    matches = []
+    for column in columns:
+        lowered = str(column).strip().lower()
+        if any(hint in lowered for hint in _FILL_SOURCE_HINTS):
+            matches.append(str(column))
+    return matches
