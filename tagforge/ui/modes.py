@@ -13,11 +13,11 @@ MODE_TAG = "Tag name generator"
 MODE_OPTIONS: Tuple[str, ...] = (MODE_FILL, MODE_TAG)
 
 _MODE_HELP = (
-    "**Fill abbreviations into columns** reads your main sheet, adds a new "
-    "abbreviation column next to each column you choose and leaves the cell "
-    "empty when a value is not in the list.\n\n"
-    "**Tag name generator** is the step-by-step wizard that builds a complete "
-    "tag from a template."
+    "**Fill abbreviations into columns** fills abbreviation columns that "
+    "already exist in your file and leaves the cell empty when a value is "
+    "not in the list.\n\n"
+    "**Tag name generator** is the step-by-step wizard that builds a "
+    "complete tag from a template."
 )
 
 

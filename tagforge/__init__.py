@@ -21,8 +21,9 @@ Typical use of the filler::
 
     from tagforge import FillConfig, FillMapping, run_column_fill
 
-    result = run_column_fill(df, table, [FillMapping("Equipment Description")], FillConfig())
-    result.output_frame          # original columns + "Equipment Description Abbr"
+    pairs = [FillMapping("Equipment Description", "Equipment Description Abbr")]
+    result = run_column_fill(df, table, pairs, FillConfig())
+    result.output_frame          # same columns; the existing Abbr column is filled
 
 Typical use of the tag wizard::
 
@@ -67,7 +68,7 @@ from .config import (
     TemplateError,
     validate_template,
 )
-from .detect import guess_column, guess_pair, guess_source_columns
+from .detect import guess_column, guess_fill_pairs, guess_pair, guess_source_columns
 from .exporters import (
     build_abbreviations_csv,
     build_fill_report_workbook,
@@ -88,7 +89,7 @@ from .reporting import build_report_sheets
 from .taggen import RowResult, TagGenerator
 from .validation import Issue, check_results
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "FillConfig",
@@ -100,6 +101,7 @@ __all__ = [
     "build_fill_workbook",
     "build_fill_report_workbook",
     "guess_source_columns",
+    "guess_fill_pairs",
     "Abbreviation",
     "DROP_MARKER",
     "SOURCE_USER",

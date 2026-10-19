@@ -1,7 +1,9 @@
 """Tests for the "fill abbreviations into columns" engine.
 
-The important guarantee is the user's rule: **if a value has no abbreviation,
-the new cell stays empty** - the original text is never copied into it.
+The important guarantees are the user's rules: **the abbreviation is
+written into a target column that already exists** (no column is created)
+and **if a value has no abbreviation, the target cell stays empty** - the
+original text is never copied into it.
 """
 
 import io
@@ -29,6 +31,7 @@ from tagforge.column_fill import (
     run_column_fill,
     unique_column_name,
 )
+from tagforge.detect import guess_fill_pairs
 from tagforge.exporters import build_fill_report_workbook, build_fill_workbook
 
 
@@ -43,7 +46,9 @@ def frame() -> pd.DataFrame:
                 "Agitator",
                 "",
             ],
+            "Equipment Abbr": ["", "", "", ""],
             "Parameter": ["Temperature", "Flow", "", "Pressure Indicator"],
+            "Parameter Abbr": ["", "", "", ""],
             "Qty": [1, 2, 3, 4],
         }
     )
@@ -58,7 +63,7 @@ def test_any_match_takes_the_longest_phrase_anywhere(frame, sample_table):
 
 
 def test_any_match_ignores_unknown_words_before_the_match(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Scrubber Recirculation Pump"]})
+    frame = pd.DataFrame({"Equipment": ["Scrubber Recirculation Pump"], "Equipment Abbr": [""]})
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig(match_mode=MATCH_ANY))
     assert result.output_frame["Equipment Abbr"].tolist() == ["PMP"]
 
@@ -70,33 +75,33 @@ def test_missing_abbreviation_leaves_the_cell_empty(frame, sample_table):
     assert cells[2].abbreviation == ""
     assert cells[3].status == STATUS_EMPTY
     assert cells[3].abbreviation == ""
-    # the original text is never copied into the new column
+    # the original text is never copied into the target column
     assert "Agitator" not in result.output_frame["Equipment Abbr"].tolist()
 
 
 def test_whole_cell_must_match_exactly(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Cooling Tower", "Cooling Tower No 2", "Temperature"]})
+    frame = pd.DataFrame({"Equipment": ["Cooling Tower", "Cooling Tower No 2", "Temperature"], "Equipment Abbr": ["", "", ""]})
     config = FillConfig(match_mode=MATCH_EXACT)
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], config)
     assert result.output_frame["Equipment Abbr"].tolist() == ["CT", "", "TMP"]
 
 
 def test_whole_cell_ignores_case_and_extra_spaces(sample_table):
-    frame = pd.DataFrame({"Equipment": ["  cooling   TOWER "]})
+    frame = pd.DataFrame({"Equipment": ["  cooling   TOWER "], "Equipment Abbr": [""]})
     config = FillConfig(match_mode=MATCH_EXACT)
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], config)
     assert result.output_frame["Equipment Abbr"].tolist() == ["CT"]
 
 
 def test_every_word_must_match(table):
-    frame = pd.DataFrame({"Equipment": ["Boiler Feed Water Pump", "Cooling Tower No 2", "Agitator Pump"]})
+    frame = pd.DataFrame({"Equipment": ["Boiler Feed Water Pump", "Cooling Tower No 2", "Agitator Pump"], "Equipment Abbr": ["", "", ""]})
     config = FillConfig(match_mode=MATCH_ALL_WORDS, separator="_")
     result = run_column_fill(frame, table, [FillMapping("Equipment")], config)
     assert result.output_frame["Equipment Abbr"].tolist() == ["BFW_PMP", "CT_NO_2", ""]
 
 
 def test_one_unknown_word_empties_the_whole_all_words_cell(table):
-    frame = pd.DataFrame({"Equipment": ["Pump Agitator"]})
+    frame = pd.DataFrame({"Equipment": ["Pump Agitator"], "Equipment Abbr": [""]})
     config = FillConfig(match_mode=MATCH_ALL_WORDS)
     result = run_column_fill(frame, table, [FillMapping("Equipment")], config)
     assert result.output_frame["Equipment Abbr"].tolist() == [""]
@@ -111,7 +116,8 @@ def test_find_match_returns_none_for_unknown_text(sample_table):
 def test_drop_marker_never_writes_the_marker(sample_table):
     sample_table.add("Agitator", DROP_MARKER, source="user added")
     result = run_column_fill(
-        pd.DataFrame({"Equipment": ["Agitator"]}), sample_table, [FillMapping("Equipment")], FillConfig()
+        pd.DataFrame({"Equipment": ["Agitator"], "Equipment Abbr": [""]}),
+        sample_table, [FillMapping("Equipment")], FillConfig(),
     )
     assert result.output_frame["Equipment Abbr"].tolist() == [""]
 
@@ -119,17 +125,17 @@ def test_drop_marker_never_writes_the_marker(sample_table):
 # ---------------------------------------------------------------------------
 # output layout
 # ---------------------------------------------------------------------------
-def test_new_columns_are_inserted_next_to_their_source(frame, sample_table):
-    mappings = [FillMapping("Equipment"), FillMapping("Parameter")]
-    result = run_column_fill(frame, sample_table, mappings, FillConfig())
-    assert list(result.output_frame.columns) == [
-        "Equipment",
-        "Equipment Abbr",
-        "Parameter",
-        "Parameter Abbr",
-        "Qty",
+def test_no_new_columns_are_created(frame, sample_table):
+    mappings = [
+        FillMapping("Equipment", "Equipment Abbr"),
+        FillMapping("Parameter", "Parameter Abbr"),
     ]
+    result = run_column_fill(frame, sample_table, mappings, FillConfig())
+    # same columns, same order, same rows - only the targets got values
+    assert list(result.output_frame.columns) == list(frame.columns)
     assert len(result.output_frame) == len(frame)
+    assert result.output_frame["Equipment Abbr"].iloc[0] == "CT No 2"
+    assert result.output_frame["Parameter Abbr"].iloc[0] == "TMP"
 
 
 def test_source_frame_is_never_modified(frame, sample_table):
@@ -138,20 +144,49 @@ def test_source_frame_is_never_modified(frame, sample_table):
     pd.testing.assert_frame_equal(frame, before)
 
 
-def test_two_mappings_of_the_same_column_keep_their_order(frame, sample_table):
-    mappings = [FillMapping("Equipment", output="Short"), FillMapping("Equipment", output="Exact")]
+def test_one_source_can_fill_two_existing_targets(frame, sample_table):
+    frame = frame.assign(Short="", Exact="")
+    mappings = [FillMapping("Equipment", "Short"), FillMapping("Equipment", "Exact")]
     result = run_column_fill(frame, sample_table, mappings, FillConfig())
-    assert list(result.output_frame.columns) == ["Equipment", "Short", "Exact", "Parameter", "Qty"]
+    assert list(result.output_frame.columns) == list(frame.columns)
+    assert result.output_frame["Short"].tolist() == result.output_frame["Exact"].tolist()
+    assert result.output_frame["Short"].iloc[0] == "CT No 2"
 
 
-def test_existing_column_is_never_overwritten(frame, sample_table):
+def test_target_column_is_overwritten_in_the_output_only(frame, sample_table):
     frame = frame.copy()
     frame["Equipment Abbr"] = ["keep 1", "keep 2", "keep 3", "keep 4"]
     result = run_column_fill(
-        frame, sample_table, [FillMapping("Equipment", output="Equipment Abbr")], FillConfig()
+        frame, sample_table, [FillMapping("Equipment", target="Equipment Abbr")], FillConfig()
     )
-    assert result.columns[0].output_name == "Equipment Abbr (2)"
+    assert result.columns[0].target_name == "Equipment Abbr"
+    assert result.columns[0].output_name == "Equipment Abbr"  # alias
+    assert result.output_frame["Equipment Abbr"].tolist() == ["CT No 2", "BFW PMP B", "", ""]
+    # the uploaded frame itself is untouched
     assert frame["Equipment Abbr"].tolist() == ["keep 1", "keep 2", "keep 3", "keep 4"]
+
+
+def test_missing_target_column_raises(frame, sample_table):
+    with pytest.raises(KeyError, match="does not create columns"):
+        run_column_fill(
+            frame, sample_table, [FillMapping("Equipment", "No Such Column")], FillConfig()
+        )
+
+
+def test_source_and_target_must_differ(frame, sample_table):
+    with pytest.raises(ValueError, match="overwrite the original text"):
+        run_column_fill(
+            frame, sample_table, [FillMapping("Equipment", "Equipment")], FillConfig()
+        )
+
+
+def test_same_target_cannot_be_used_twice(frame, sample_table):
+    mappings = [
+        FillMapping("Equipment", "Equipment Abbr"),
+        FillMapping("Parameter", "Equipment Abbr"),
+    ]
+    with pytest.raises(ValueError, match="more than once"):
+        run_column_fill(frame, sample_table, mappings, FillConfig())
 
 
 def test_unique_column_name_is_case_insensitive():
@@ -170,11 +205,13 @@ def test_unknown_source_column_raises(frame, sample_table):
         run_column_fill(frame, sample_table, [FillMapping("Does not exist")], FillConfig())
 
 
-def test_empty_output_name_falls_back_to_the_suffix(frame, sample_table):
+def test_empty_target_falls_back_to_existing_suffix_column(frame, sample_table):
+    frame = frame.assign(**{"Equipment Code": ""})
     result = run_column_fill(
         frame, sample_table, [FillMapping("Equipment", output="")], FillConfig(output_suffix=" Code")
     )
-    assert result.columns[0].output_name == "Equipment Code"
+    assert result.columns[0].target_name == "Equipment Code"
+    assert result.output_frame["Equipment Code"].iloc[0] == "CT No 2"
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +229,7 @@ def test_letter_case_setting(frame, sample_table):
 
 
 def test_plural_matching_is_off_by_default(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Pumps", "Pump"]})
+    frame = pd.DataFrame({"Equipment": ["Pumps", "Pump"], "Equipment Abbr": ["", ""]})
     plain = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     assert plain.output_frame["Equipment Abbr"].tolist() == ["", "PMP"]
 
@@ -203,7 +240,7 @@ def test_plural_matching_is_off_by_default(sample_table):
 
 
 def test_not_found_can_keep_the_original_text_when_asked(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Agitator"]})
+    frame = pd.DataFrame({"Equipment": ["Agitator"], "Equipment Abbr": [""]})
     config = FillConfig(when_not_found=NOT_FOUND_KEEP)
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], config)
     assert result.output_frame["Equipment Abbr"].tolist() == ["Agitator"]
@@ -211,7 +248,7 @@ def test_not_found_can_keep_the_original_text_when_asked(sample_table):
 
 
 def test_per_column_rule_overrides_the_default(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Cooling Tower", "Cooling Tower No 2"]})
+    frame = pd.DataFrame({"Equipment": ["Cooling Tower", "Cooling Tower No 2"], "Equipment Abbr": ["", ""]})
     config = FillConfig(match_mode=MATCH_ANY)
     mapping = FillMapping("Equipment", match_mode=MATCH_EXACT)
     result = run_column_fill(frame, sample_table, [mapping], config)
@@ -227,6 +264,7 @@ def test_summary_counts(frame, sample_table):
     summary = build_fill_summary_frame(result)
 
     assert list(summary["Source column"]) == ["Equipment", "Parameter"]
+    assert list(summary["Target column"]) == ["Equipment Abbr", "Parameter Abbr"]
     equipment = summary.iloc[0]
     assert equipment["Filled"] == 2
     assert equipment["Left empty (no abbreviation)"] == 1
@@ -250,7 +288,7 @@ def test_not_found_report_lists_distinct_values(frame, sample_table):
 
 
 def test_not_found_report_is_empty_when_everything_matches(sample_table):
-    frame = pd.DataFrame({"Equipment": ["Pump", "Cooling Tower"]})
+    frame = pd.DataFrame({"Equipment": ["Pump", "Cooling Tower"], "Equipment Abbr": ["", ""]})
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     report = build_fill_not_found_frame(result)
     assert report.empty
@@ -297,9 +335,33 @@ def test_statuses_are_reported(frame, sample_table):
 
 
 def test_any_match_prefers_the_longest_phrase_then_the_earliest(table):
-    frame = pd.DataFrame({"Text": ["Tower Cooling", "Cooling Tower"]})
+    frame = pd.DataFrame({"Text": ["Tower Cooling", "Cooling Tower"], "Text Abbr": ["", ""]})
     result = run_column_fill(frame, table, [FillMapping("Text")], FillConfig(match_mode=MATCH_ANY))
     # "Tower" (1 word) and "Cooling" (1 word) are both matches in the first
     # cell -> the earliest one wins. In the second cell "Cooling Tower" (2
     # words) beats both single words.
     assert result.output_frame["Text Abbr"].tolist() == ["TWR", "CT"]
+
+
+# ---------------------------------------------------------------------------
+# source -> target pair detection
+# ---------------------------------------------------------------------------
+def test_guess_fill_pairs_detects_abbr_columns():
+    columns = [
+        "Sr No", "Plant Section", "Plant Section Abbr",
+        "Equipment Description", "Equipment Description Abbr",
+        "Parameter", "Parameter Abbr", "Qty",
+    ]
+    assert guess_fill_pairs(columns) == [
+        ("Plant Section", "Plant Section Abbr"),
+        ("Equipment Description", "Equipment Description Abbr"),
+        ("Parameter", "Parameter Abbr"),
+    ]
+
+
+def test_guess_fill_pairs_uses_previous_column_for_plain_abbr():
+    assert guess_fill_pairs(["Equipment", "Abbr", "Qty"]) == [("Equipment", "Abbr")]
+
+
+def test_guess_fill_pairs_without_abbr_columns_is_empty():
+    assert guess_fill_pairs(["Equipment", "Qty", "Remarks"]) == []

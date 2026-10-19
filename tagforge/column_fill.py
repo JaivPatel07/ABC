@@ -3,12 +3,16 @@
 This is the "column filler" mode of TagForge.  It is different from the tag
 generator in :mod:`tagforge.taggen`:
 
-* the user picks **several columns** of the main file and each one gets a new
-  column with its abbreviation right next to it,
-* **one** abbreviation list is used for every column,
+* the user maps **source column -> target column** pairs, e.g.
+  ``Equipment Description -> Equipment Description Abbr``.  The target
+  column **already exists in the file** (usually empty) - the filler writes
+  into it and **never creates a new column**,
+* any number of pairs can be filled in one run,
+* **one** abbreviation list is used for every pair,
 * only the abbreviation is written - words that are not in the list are
-  **never copied into the new column**; the cell is left empty instead,
-* the source column is never modified.
+  **never copied into the target column**; the cell is left empty instead,
+* the source column and the uploaded frame are never modified; the result
+  is a copy with the same columns in the same order.
 
 Four matching rules are available (chosen by the user):
 
@@ -106,19 +110,50 @@ _ABBREVIATION_FALLBACK = "Abbreviation"
 # ---------------------------------------------------------------------------
 # configuration objects
 # ---------------------------------------------------------------------------
-@dataclass
+@dataclass(init=False)
 class FillMapping:
-    """One "source column -> new abbreviation column" instruction.
+    """One "source column -> existing target column" instruction.
 
-    ``output`` may be empty - :func:`run_column_fill` then builds a name from
-    the source column plus :attr:`FillConfig.output_suffix`.
-    ``match_mode`` may be empty - the global :attr:`FillConfig.match_mode` is
-    used in that case.
+    ``target`` is a column that **already exists** in the frame (usually an
+    empty ``… Abbr`` column supplied by the user); the abbreviation is
+    written into it.  No new column is ever created.
+
+    ``target`` may be empty only as a shortcut: :func:`run_column_fill`
+    then looks for an existing column named
+    ``source + FillConfig.output_suffix`` and fails if there is none.
+
+    ``output`` is accepted as a backwards-compatible alias of ``target``.
+    ``match_mode`` may be empty - the global :attr:`FillConfig.match_mode`
+    is used in that case.
     """
 
     source: str
-    output: str = ""
+    target: str = ""
     match_mode: str = ""
+
+    def __init__(
+        self,
+        source: str = "",
+        target: str = "",
+        match_mode: str = "",
+        *,
+        output: str = "",
+    ) -> None:
+        self.source = source
+        self.target = target or output
+        self.match_mode = match_mode
+
+    @property
+    def output(self) -> str:  # backwards-compatible alias of ``target``
+        return self.target
+
+    @output.setter
+    def output(self, value: str) -> None:
+        self.target = value
+
+    def resolved_target(self, config: "FillConfig") -> str:
+        """The column to write into (still has to exist in the frame)."""
+        return (self.target or "").strip() or f"{self.source}{config.output_suffix}"
 
     def resolved_mode(self, config: "FillConfig") -> str:
         mode = self.match_mode or config.match_mode
@@ -135,6 +170,9 @@ class FillConfig:
     allow_plural_matching: bool = False
     keep_numbers: bool = True  # used by MATCH_ALL_WORDS and MATCH_WORDWISE
     when_not_found: str = NOT_FOUND_BLANK
+    # Only used to *find* an existing target column when a mapping does not
+    # name one ("Equipment" -> existing "Equipment Abbr").  Never used to
+    # create a column.
     output_suffix: str = " Abbr"
     wordwise_unknown: str = WORDWISE_KEEP  # only used by MATCH_WORDWISE
 
@@ -197,12 +235,16 @@ class CellFill:
 
 @dataclass
 class FilledColumn:
-    """All cells of one mapped column, plus the resolved output column name."""
+    """All cells of one mapped pair, plus the resolved target column name."""
 
     mapping: FillMapping
-    output_name: str
+    target_name: str
     match_mode: str
     cells: List[CellFill] = field(default_factory=list)
+
+    @property
+    def output_name(self) -> str:  # backwards-compatible alias
+        return self.target_name
 
     @property
     def values(self) -> List[str]:
@@ -393,14 +435,14 @@ def find_match(
 
 
 # ---------------------------------------------------------------------------
-# output column names
+# column-name helper (kept for backwards compatibility; the filler itself
+# no longer creates columns, so it does not use this any more)
 # ---------------------------------------------------------------------------
 def unique_column_name(existing: Sequence[object], wanted: str, fallback: str = _ABBREVIATION_FALLBACK) -> str:
     """A column name that does not clash with ``existing`` (case-insensitive).
 
     Excel treats headers case-insensitively, so "Abbr" and "abbr" are the same
-    column.  Clashes get `` (2)``, `` (3)`` ... appended - an existing column is
-    never overwritten.
+    column.  Clashes get `` (2)``, `` (3)`` ... appended.
     """
     taken = {str(name).strip().lower() for name in existing}
     base = to_text(wanted) or fallback
@@ -422,11 +464,12 @@ def run_column_fill(
     config: Optional[FillConfig] = None,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> FillResult:
-    """Fill every mapped column and return the new frame plus a report.
+    """Fill every mapped target column and return the result frame.
 
-    The source ``frame`` is never modified.  New columns are inserted directly
-    after their source column; all other columns and rows are preserved in
-    their original order.
+    The source ``frame`` is never modified.  Abbreviations are written into
+    the **existing** target column of each mapping (overwriting whatever it
+    contained - it is normally empty); no column is created, removed or
+    moved, and all rows are preserved.
     """
     if frame is None:
         raise ValueError("No data to fill - upload the main Excel file first.")
@@ -436,27 +479,40 @@ def run_column_fill(
     mappings = list(mappings or [])
 
     available = [str(column) for column in frame.columns]
+    resolved: List[Tuple[FillMapping, str, str]] = []
+    used_targets: set = set()
     for mapping in mappings:
         if mapping.source not in available:
             raise KeyError(
-                f"Column '{mapping.source}' was not found in the data file. "
+                f"Source column '{mapping.source}' was not found in the data file. "
                 f"Available columns: {', '.join(available) or 'none'}."
             )
-
-    # Resolve the output names against the columns that already exist *and*
-    # the names chosen earlier in this run, so nothing is ever overwritten.
-    used_names: List[str] = list(available)
-    resolved: List[Tuple[FillMapping, str, str]] = []
-    for mapping in mappings:
-        wanted = mapping.output.strip() or f"{mapping.source}{config.output_suffix}"
-        output_name = unique_column_name(used_names, wanted)
-        used_names.append(output_name)
-        resolved.append((mapping, output_name, mapping.resolved_mode(config)))
+        target_name = mapping.resolved_target(config)
+        if target_name not in available:
+            raise KeyError(
+                f"Target column '{target_name}' was not found in the data file. "
+                f"The filler does not create columns - choose a column that "
+                f"already exists in the file. "
+                f"Available columns: {', '.join(available) or 'none'}."
+            )
+        if target_name == mapping.source:
+            raise ValueError(
+                f"Source and target are both '{mapping.source}' - filling it "
+                f"would overwrite the original text. Choose a different "
+                f"target column."
+            )
+        if target_name in used_targets:
+            raise ValueError(
+                f"Target column '{target_name}' is used more than once. "
+                f"Each target column can only be filled from one source column."
+            )
+        used_targets.add(target_name)
+        resolved.append((mapping, target_name, mapping.resolved_mode(config)))
 
     filled_columns: List[FilledColumn] = []
     total = len(resolved) * len(frame)
     done = 0
-    for mapping, output_name, mode in resolved:
+    for mapping, target_name, mode in resolved:
         values = frame[mapping.source].tolist()
         cells: List[CellFill] = []
         for row_id, value in enumerate(values):
@@ -518,7 +574,7 @@ def run_column_fill(
         filled_columns.append(
             FilledColumn(
                 mapping=mapping,
-                output_name=output_name,
+                target_name=target_name,
                 match_mode=mode,
                 cells=cells,
             )
@@ -535,60 +591,41 @@ def run_column_fill(
 
 
 def _build_output_frame(frame: pd.DataFrame, filled_columns: Sequence[FilledColumn]) -> pd.DataFrame:
-    """Insert each new column right after its source column."""
-    if not filled_columns:
-        return frame.copy()
+    """A copy of ``frame`` with each existing target column filled.
 
-    new_data = {column.output_name: pd.Series(column.values, index=frame.index, dtype="object")
-                for column in filled_columns}
-
-    after: Dict[str, List[str]] = {}
+    Same columns, same order, same rows - nothing is created or moved.
+    Only the target columns get new values.
+    """
+    output = frame.copy()
     for column in filled_columns:
-        after.setdefault(column.mapping.source, []).append(column.output_name)
-
-    order: List[str] = []
-    for name in frame.columns:
-        order.append(name)
-        order.extend(after.get(str(name), []))
-
-    # Any output whose source was not an original column cannot happen because
-    # the source is validated above, but keep the guard for safety.
-    for name in new_data:
-        if name not in order:
-            order.append(name)
-
-    combined = pd.concat([frame, pd.DataFrame(new_data, index=frame.index)], axis=1)
-    return combined.loc[:, order]
+        output[column.target_name] = pd.Series(
+            column.values, index=frame.index, dtype="object"
+        )
+    return output
 
 
 # ---------------------------------------------------------------------------
 # report tables
 # ---------------------------------------------------------------------------
 def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
-    """One row per mapped column: how many cells were filled / left empty."""
+    """One row per mapped pair: how many cells were filled / left empty."""
     rows = []
     for column in result.columns:
         rows.append(
             {
                 "Source column": column.mapping.source,
-                "New column": column.output_name,
-                "Match rule": column.match_mode,
-                "Rows": len(column.cells),
+                "Target column": column.target_name,
                 "Filled": column.filled,
                 "Left empty (no abbreviation)": column.not_found,
                 "Empty source cell": column.empty,
-                "Original kept": column.kept,
             }
         )
     columns = [
         "Source column",
-        "New column",
-        "Match rule",
-        "Rows",
+        "Target column",
         "Filled",
         "Left empty (no abbreviation)",
         "Empty source cell",
-        "Original kept",
     ]
     if not rows:
         return pd.DataFrame(columns=columns)

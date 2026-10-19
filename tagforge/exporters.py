@@ -122,7 +122,7 @@ def build_fill_workbook(
     data_sheet_name: str = "Filled Data",
     include_report: bool = True,
 ) -> bytes:
-    """The main deliverable of the filler: original data + abbreviation columns."""
+    """The main deliverable of the filler: original data, target columns filled."""
     sheets: Dict[str, pd.DataFrame] = {data_sheet_name: result.output_frame}
     if include_report:
         sheets.update(_fill_report_sheets(result))
