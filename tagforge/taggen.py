@@ -24,6 +24,9 @@ from .config import (
 )
 from .text_utils import (
     collapse_repeats,
+    is_code_token,
+    is_single_letter_token,
+    normalize_code_token,
     singular_candidates,
     to_text,
     tokenize,
@@ -214,6 +217,16 @@ class TagGenerator:
 
             if token.kind == "number" and config.keep_numbers:
                 pieces.append(MatchedPiece(token.text, True, "", is_number=True))
+                index += 1
+                continue
+
+            if is_code_token(token.text):
+                pieces.append(MatchedPiece(normalize_code_token(token.text), True, "", is_number=True, note="code"))
+                index += 1
+                continue
+
+            if is_single_letter_token(token.text):
+                pieces.append(MatchedPiece(token.text, True, ""))
                 index += 1
                 continue
 

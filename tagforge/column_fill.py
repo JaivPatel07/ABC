@@ -47,7 +47,7 @@ import pandas as pd
 
 from .abbreviations import DROP_MARKER, AbbreviationTable
 from .config import CASE_LOWER, CASE_PRESERVE, CASE_UPPER
-from .text_utils import to_text, tokenize
+from .text_utils import is_code_token, is_single_letter_token, normalize_code_token, to_text, tokenize
 
 __all__ = [
     "MATCH_ANY",
@@ -412,6 +412,17 @@ def find_match(
         while index < len(keys):
             hit = table.lookup(keys, index, allow_plurals=allow_plural_matching)
             if hit is None:
+                raw = tokens[index].text
+                # codes like R-1400 -> R_1400 are always kept (not unknown)
+                if is_code_token(raw):
+                    abbreviations.append(normalize_code_token(raw))
+                    index += 1
+                    continue
+                # single letters like A, B are kept and not considered unknown
+                if is_single_letter_token(raw):
+                    abbreviations.append(raw)
+                    index += 1
+                    continue
                 # numbers ("No 2") are not abbreviations; like the tag
                 # generator, they can be kept as typed.
                 if keep_numbers and tokens[index].kind == "number":
@@ -452,6 +463,19 @@ def find_match(
                 index += size
                 continue
             token = tokens[index]
+            raw = token.text
+            # Codes like R-1400 -> R_1400: normalise hyphen to underscore, keep, never unknown
+            if is_code_token(raw):
+                out_parts.append(normalize_code_token(raw))
+                has_abbreviation = True
+                index += 1
+                continue
+            # Single letters like A, B: keep as typed, never count as unknown
+            if is_single_letter_token(raw):
+                out_parts.append(raw)
+                has_abbreviation = True
+                index += 1
+                continue
             if keep_numbers and token.kind == "number":
                 out_parts.append(token.text)
                 index += 1
