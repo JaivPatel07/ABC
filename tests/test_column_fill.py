@@ -2,9 +2,10 @@
 
 The important guarantees are the user's rules: **the abbreviation is
 written into the target column the user selected** (an existing column, or
-one explicitly created at the end of the file) and **if a value has no
-abbreviation, the target cell stays empty** - the original text is never
-copied into it.
+one explicitly created at the end of the file), **words that have no
+abbreviation are kept as typed**, and **a value where no word at all has an
+abbreviation keeps its original text** - nothing is silently emptied.  Every
+word that has no abbreviation is listed in the reports.
 """
 
 import io
@@ -24,10 +25,12 @@ from tagforge.column_fill import (
     STATUS_FILLED,
     STATUS_KEPT,
     STATUS_NOT_FOUND,
+    STATUS_PARTIAL,
     FillConfig,
     FillMapping,
     build_fill_not_found_frame,
     build_fill_summary_frame,
+    build_fill_unknown_words_frame,
     find_match,
     run_column_fill,
     unique_column_name,
@@ -69,15 +72,30 @@ def test_any_match_ignores_unknown_words_before_the_match(sample_table):
     assert result.output_frame["Equipment Abbr"].tolist() == ["PMP"]
 
 
-def test_missing_abbreviation_leaves_the_cell_empty(frame, sample_table):
+def test_value_without_any_abbreviation_keeps_the_original_text(frame, sample_table):
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     cells = result.columns[0].cells
-    assert cells[2].status == STATUS_NOT_FOUND
-    assert cells[2].abbreviation == ""
+    # "Agitator" has no abbreviation - the cell is not emptied, the old value stays
+    assert cells[2].status == STATUS_KEPT
+    assert cells[2].abbreviation == "Agitator"
+    assert cells[2].unknown_words == ["Agitator"]
+    assert result.output_frame["Equipment Abbr"].iloc[2] == "Agitator"
+    # an empty source cell still stays empty
     assert cells[3].status == STATUS_EMPTY
     assert cells[3].abbreviation == ""
-    # the original text is never copied into the target column
-    assert "Agitator" not in result.output_frame["Equipment Abbr"].tolist()
+
+
+def test_unknown_words_inside_a_sentence_are_kept_as_typed(frame, sample_table):
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    cells = result.columns[0].cells
+    # "Cooling Tower No 2": "No" is not in the list -> kept, the rest abbreviated
+    assert cells[0].status == STATUS_PARTIAL
+    assert cells[0].abbreviation == "CT No 2"
+    assert cells[0].unknown_words == ["No"]
+    # "Boiler Feed Water Pump B": the trailing "B" is kept
+    assert cells[1].status == STATUS_PARTIAL
+    assert cells[1].abbreviation == "BFW PMP B"
+    assert "B" in cells[1].unknown_words
 
 
 def test_whole_cell_must_match_exactly(sample_table):
@@ -154,7 +172,7 @@ def test_new_column_is_appended_at_the_end(frame, sample_table):
 
     assert list(result.output_frame.columns) == list(frame.columns) + ["Equipment Abbr 2"]
     assert result.output_frame["Equipment Abbr 2"].tolist() == [
-        "CT No 2", "BFW PMP B", "", ""
+        "CT No 2", "BFW PMP B", "Agitator", ""
     ]
     assert result.new_columns == ["Equipment Abbr 2"]
     # the uploaded frame is untouched and never gets the new column
@@ -166,7 +184,7 @@ def test_new_column_uses_the_target_column_name_as_given(frame, sample_table):
     mapping = FillMapping("Parameter", "Short Param", new_column=True)
     result = run_column_fill(frame, sample_table, [mapping], FillConfig())
     assert result.columns[0].target_name == "Short Param"
-    assert result.output_frame["Short Param"].tolist() == ["TMP", "", "", "PI"]
+    assert result.output_frame["Short Param"].tolist() == ["TMP", "Flow", "", "PI"]
 
 
 def test_new_column_name_must_not_already_exist(frame, sample_table):
@@ -207,7 +225,7 @@ def test_target_column_is_overwritten_in_the_output_only(frame, sample_table):
     )
     assert result.columns[0].target_name == "Equipment Abbr"
     assert result.columns[0].output_name == "Equipment Abbr"  # alias
-    assert result.output_frame["Equipment Abbr"].tolist() == ["CT No 2", "BFW PMP B", "", ""]
+    assert result.output_frame["Equipment Abbr"].tolist() == ["CT No 2", "BFW PMP B", "Agitator", ""]
     # the uploaded frame itself is untouched
     assert frame["Equipment Abbr"].tolist() == ["keep 1", "keep 2", "keep 3", "keep 4"]
 
@@ -277,7 +295,9 @@ def test_letter_case_setting(frame, sample_table):
 def test_plural_matching_is_off_by_default(sample_table):
     frame = pd.DataFrame({"Equipment": ["Pumps", "Pump"], "Equipment Abbr": ["", ""]})
     plain = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
-    assert plain.output_frame["Equipment Abbr"].tolist() == ["", "PMP"]
+    # "Pumps" is not in the list -> kept as typed, never guessed to "PMP"
+    assert plain.output_frame["Equipment Abbr"].tolist() == ["Pumps", "PMP"]
+    assert plain.columns[0].cells[0].unknown_words == ["Pumps"]
 
     plural = run_column_fill(
         frame, sample_table, [FillMapping("Equipment")], FillConfig(allow_plural_matching=True)
@@ -312,13 +332,15 @@ def test_summary_counts(frame, sample_table):
     assert list(summary["Source column"]) == ["Equipment", "Parameter"]
     assert list(summary["Target column"]) == ["Equipment Abbr", "Parameter Abbr"]
     equipment = summary.iloc[0]
-    assert equipment["Filled"] == 2
-    assert equipment["Left empty (no abbreviation)"] == 1
+    assert equipment["Filled (every word abbreviated)"] == 0
+    assert equipment["Filled, unknown words kept"] == 2
+    assert equipment["Original kept (no abbreviation)"] == 1  # Agitator
     assert equipment["Empty source cell"] == 1
 
     parameter = summary.iloc[1]
-    assert parameter["Filled"] == 2  # Temperature, Pressure Indicator
-    assert parameter["Left empty (no abbreviation)"] == 1  # Flow
+    assert parameter["Filled (every word abbreviated)"] == 2  # Temperature, Pressure Indicator
+    assert parameter["Filled, unknown words kept"] == 0
+    assert parameter["Original kept (no abbreviation)"] == 1  # Flow
     assert parameter["Empty source cell"] == 1
 
 
@@ -330,7 +352,35 @@ def test_not_found_report_lists_distinct_values(frame, sample_table):
     values = set(report["Value with no abbreviation"])
     assert "Agitator" in values
     assert "Flow" in values
-    assert 2 <= len(report)  # one row per column/value pair
+    # values that were filled but contain an unknown word are listed as well
+    assert "Cooling Tower No 2" in values
+    assert 3 <= len(report)  # one row per column/value pair
+
+
+def test_not_found_report_shows_the_unknown_words_and_what_was_written(frame, sample_table):
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    report = build_fill_not_found_frame(result)
+    row = report[report["Value with no abbreviation"] == "Cooling Tower No 2"].iloc[0]
+    assert row["Words with no abbreviation"] == "No"
+    assert row["Written in target column"] == "CT No 2"
+
+    kept = report[report["Value with no abbreviation"] == "Agitator"].iloc[0]
+    assert kept["Written in target column"] == "Agitator"
+
+
+def test_unknown_words_report_counts_every_word(frame, sample_table):
+    frame = pd.DataFrame(
+        {
+            "Equipment": ["Cooling Tower Scrubber", "Scrubber Pump", "Agitator"],
+            "Equipment Abbr": ["", "", ""],
+        }
+    )
+    result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
+    report = build_fill_unknown_words_frame(result)
+    assert list(report["Word with no abbreviation"]) == ["Scrubber", "Agitator"]
+    scrubber = report[report["Word with no abbreviation"] == "Scrubber"].iloc[0]
+    assert scrubber["Occurrences"] == 2
+    assert scrubber["Example result"] == "CT Scrubber"
 
 
 def test_not_found_report_is_empty_when_everything_matches(sample_table):
@@ -341,9 +391,12 @@ def test_not_found_report_is_empty_when_everything_matches(sample_table):
     assert list(report.columns) == [
         "Source column",
         "Value with no abbreviation",
+        "Words with no abbreviation",
+        "Written in target column",
         "Occurrences",
         "First row",
     ]
+    assert build_fill_unknown_words_frame(result).empty
 
 
 def test_fill_workbook_round_trip(frame, sample_table):
@@ -353,7 +406,7 @@ def test_fill_workbook_round_trip(frame, sample_table):
 
     sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
     assert "Filled Data" in sheets
-    assert {"Summary", "Not Found", "Run Settings"}.issubset(sheets)
+    assert {"Summary", "Not Found", "Unknown Words", "Run Settings"}.issubset(sheets)
     filled = sheets["Filled Data"]
     assert len(filled) == len(frame)
     assert "Equipment Abbr" in filled.columns
@@ -380,13 +433,13 @@ def test_fill_report_workbook(frame, sample_table):
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     data = build_fill_report_workbook(result)
     sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
-    assert set(sheets) == {"Summary", "Not Found", "Run Settings"}
+    assert set(sheets) == {"Summary", "Not Found", "Unknown Words", "Run Settings"}
 
 
 def test_statuses_are_reported(frame, sample_table):
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     statuses = [cell.status for cell in result.columns[0].cells]
-    assert statuses == [STATUS_FILLED, STATUS_FILLED, STATUS_NOT_FOUND, STATUS_EMPTY]
+    assert statuses == [STATUS_PARTIAL, STATUS_PARTIAL, STATUS_KEPT, STATUS_EMPTY]
 
 
 def test_any_match_prefers_the_longest_phrase_then_the_earliest(table):

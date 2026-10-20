@@ -12,8 +12,9 @@ Kept as simple as possible:
 4. preview and download.
 
 There are no settings screens: abbreviations are matched word by word
-(the :class:`~tagforge.column_fill.FillConfig` defaults) and a value with
-no abbreviation leaves the target cell empty.
+(the :class:`~tagforge.column_fill.FillConfig` defaults).  Words that have no
+abbreviation are **kept as typed**, a value where no word matches keeps its
+original text, and every such word/value is listed in step 4.
 
 Uploaded files and the abbreviation table are shared with the tag wizard.
 """
@@ -34,6 +35,7 @@ from ..column_fill import (
     FillResult,
     build_fill_not_found_frame,
     build_fill_summary_frame,
+    build_fill_unknown_words_frame,
     run_column_fill,
     unique_column_name,
 )
@@ -403,7 +405,8 @@ def _step_fill_columns(state) -> None:
         "Choose the column with the full text (source) and the column where "
         "the abbreviation must be written (target). Add one row per column. "
         "You can also create a new column - it is added at the end of the "
-        "file. No match = empty cell."
+        "file. Words without an abbreviation are kept as typed; a value "
+        "with no abbreviation at all keeps its original text."
     )
 
     frame = _require_fill_data(state)
@@ -554,9 +557,10 @@ def _step_fill_columns(state) -> None:
         hide_index=True,
     )
     st.caption(
-        f"{preview.filled_cells:,} filled · {preview.not_found_cells:,} empty "
-        f"(no abbreviation) in the preview. Target columns are overwritten "
-        f"in the downloaded file; your uploaded file is never changed."
+        f"{preview.filled_cells:,} filled · {preview.cells_with_unknown_words:,} with "
+        f"words that have no abbreviation (kept as typed) in the preview. "
+        f"Target columns are overwritten in the downloaded file; your uploaded "
+        f"file is never changed."
     )
     _next_fill(state, "Next: preview and download", enabled=bool(mappings))
 
@@ -625,7 +629,8 @@ def _step_fill_download(state) -> None:
 
     st.caption(
         f"{result.rows:,} rows · {result.filled_cells:,} cells filled · "
-        f"{result.not_found_cells:,} cells empty (no abbreviation)"
+        f"{result.cells_with_unknown_words:,} cells contain words with no "
+        f"abbreviation (kept as typed)"
     )
     st.dataframe(
         build_fill_summary_frame(result), **full_width(st.dataframe), hide_index=True
@@ -638,8 +643,18 @@ def _step_fill_download(state) -> None:
 
     not_found = build_fill_not_found_frame(result)
     if not not_found.empty:
-        st.markdown("**Values with no abbreviation (left empty)**")
+        st.markdown("**Values with words that have no abbreviation**")
+        st.caption(
+            "Includes values that were filled and kept the unknown words as "
+            "typed, values that had no abbreviation at all (original kept) and "
+            "values that were left empty."
+        )
         st.dataframe(not_found, **full_width(st.dataframe), hide_index=True)
+
+        unknown_words = build_fill_unknown_words_frame(result)
+        if not unknown_words.empty:
+            st.markdown("**Words with no abbreviation (add these to your list)**")
+            st.dataframe(unknown_words, **full_width(st.dataframe), hide_index=True)
 
     # One simple download: same file, same sheet name, mapped target columns
     # filled. New columns, when requested, are already at the end of the
@@ -665,5 +680,6 @@ def _step_fill_download(state) -> None:
     )
     st.success(
         f"Done. {result.filled_cells:,} cell(s) filled, "
-        f"{result.not_found_cells:,} left empty."
+        f"{result.cells_with_unknown_words:,} kept words that have no "
+        f"abbreviation, {result.not_found_cells:,} left empty."
     )

@@ -16,6 +16,7 @@ from .column_fill import (
     FillResult,
     build_fill_not_found_frame,
     build_fill_summary_frame,
+    build_fill_unknown_words_frame,
 )
 from .io_utils import dataframe_to_excel_bytes
 from .pipeline import PipelineResult, build_output_frame
@@ -92,6 +93,8 @@ def build_fill_settings_frame(result: FillResult) -> pd.DataFrame:
         ("Columns filled", len(result.columns)),
         ("New columns created at the end", len(result.new_columns)),
         ("Cells with an abbreviation", result.filled_cells),
+        ("Cells with unknown words kept as typed", result.partial_cells),
+        ("Cells with no abbreviation at all (original kept)", result.kept_cells),
         ("Cells left empty (no abbreviation)", result.not_found_cells),
         ("Empty source cells", result.empty_cells),
         ("Default matching rule", config.match_mode),
@@ -109,11 +112,17 @@ def _fill_report_sheets(result: FillResult) -> Dict[str, pd.DataFrame]:
     not_found = build_fill_not_found_frame(result)
     if not_found.empty:
         not_found = pd.DataFrame(
-            [{"Info": "Every value found an abbreviation in the list."}]
+            [{"Info": "Every word of every value found an abbreviation in the list."}]
+        )
+    unknown_words = build_fill_unknown_words_frame(result)
+    if unknown_words.empty:
+        unknown_words = pd.DataFrame(
+            [{"Info": "Every word of every value found an abbreviation in the list."}]
         )
     return {
         "Summary": build_fill_summary_frame(result),
         "Not Found": not_found,
+        "Unknown Words": unknown_words,
         "Run Settings": build_fill_settings_frame(result),
     }
 
