@@ -42,8 +42,9 @@ def main() -> None:
 
     st.title("TagForge")
     st.caption(
-        "Fill the abbreviation columns already in your file from your "
-        "abbreviation list. No match = empty cell. Runs fully offline."
+        "Fill abbreviation columns in your file - or create a new one at the "
+        "end - from your abbreviation list. No match = empty cell. "
+        "Runs fully offline."
     )
 
     state = AppState()

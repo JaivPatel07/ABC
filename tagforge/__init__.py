@@ -21,9 +21,13 @@ Typical use of the filler::
 
     from tagforge import FillConfig, FillMapping, run_column_fill
 
-    pairs = [FillMapping("Equipment Description", "Equipment Description Abbr")]
+    pairs = [
+        FillMapping("Equipment Description", "Equipment Description Abbr"),
+        FillMapping("Parameter", "Short Parameter", new_column=True),
+    ]
     result = run_column_fill(df, table, pairs, FillConfig())
-    result.output_frame          # same columns; the existing Abbr column is filled
+    result.output_frame          # existing column filled + new column at the end
+    result.new_columns           # ["Short Parameter"]
 
 Typical use of the tag wizard::
 

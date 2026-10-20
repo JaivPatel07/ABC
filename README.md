@@ -1,20 +1,26 @@
 # TagForge
 
-Fill the abbreviation columns **already in your file** with your company's
-abbreviation list. Runs 100% locally — no internet, no API keys.
-Your uploaded files are never modified; the result is a download.
+Fill the abbreviation columns in your file — or add a **new abbreviation
+column at the end** — from your company's abbreviation list. Runs 100%
+locally — no internet, no API keys. Your uploaded files are never modified;
+the result is a download.
 
 ## How it works
 
-Your main file already has empty abbreviation columns, for example:
+Your main file may already have empty abbreviation columns, for example:
 
 | Equipment Description | Equipment Description Abbr | Parameter | Parameter Abbr |
 | --------------------- | -------------------------- | --------- | -------------- |
 | Cooling Tower No 2    |                            | Temperature |              |
 | Agitator              |                            | Flow      |                |
 
-You tell the app **which column to fill (target)** and **where the full
-text comes from (source)** — for as many columns as you like in one run.
+You map every column **by hand**, one row per column: choose **where the
+full text comes from (source)** and **where the abbreviation must go
+(target)**. The target can be:
+
+- a column that **already exists** in your file (usually empty), or
+- **a new column**, which is added at the **end** of the downloaded file.
+
 It downloads the same file with those columns filled:
 
 | Equipment Description | Equipment Description Abbr | Parameter | Parameter Abbr |
@@ -24,10 +30,12 @@ It downloads the same file with those columns filled:
 
 Rules:
 
-- **No new column is created.** You provide the target column; the app
-  only writes into it (in the downloaded copy).
-- Many columns at once — tick all target columns (or **Select all
-  abbreviation columns**), pick a source for each one.
+- **You choose every mapping.** Nothing is decided for you; the suggested
+  pairs (`… Abbr` columns) are only a starting point you can change.
+- **New columns are optional.** A new column is appended at the end of the
+  downloaded file; existing columns keep their place.
+- Many columns at once — **＋ Add column** adds another mapping row.
+  **✕** removes a row, **Remove all** starts over.
 - A value that is not in the abbreviation list stays **empty**. The
   original text is never copied into the target column.
 - No settings to choose. Each word/phrase is replaced by its
@@ -39,10 +47,10 @@ Rules:
 
 | Step | What you do |
 | ---- | ----------- |
-| 1. Upload main file | Your `.xlsx` / `.xlsm` / `.csv` file, with its empty abbreviation columns. |
+| 1. Upload main file | Your `.xlsx` / `.xlsm` / `.csv` file. It can already hold abbreviation columns, but it does not have to. |
 | 2. Upload abbreviation list | The word/phrase → abbreviation list. Pick which columns hold the phrase and the abbreviation. |
-| 3. Map columns | Tick the target columns to fill, pick the source column for each. Columns named `… Abbr` are detected and paired automatically. |
-| 4. Preview and download | Check the result, then download the filled Excel file (one sheet, same columns, same name). |
+| 3. Map columns manually | One row per column: pick the full-text **source** and the **target** column. Choose **➕ New column at the end…** to create one; type its name (blank = `<source> Abbr`). |
+| 4. Preview and download | Check the result, then download the filled Excel file (one sheet, same columns — plus any new columns at the end). |
 
 A separate **Tag name generator** mode (sidebar) builds complete tag
 names from a template, e.g. `Cooling Tower No 2` → `CT_NO_2`.
@@ -77,7 +85,7 @@ python -m pytest -q
 ```
 app.py                  Streamlit entry point
 tagforge/
-  column_fill.py        source -> target filling engine (no columns created)
+  column_fill.py        source -> target filling engine (new columns optional)
   detect.py             guesses column pairs (e.g. "X" -> "X Abbr")
   abbreviations.py      the abbreviation list + phrase matching
   taggen.py, pipeline.py, config.py, validation.py, reporting.py
@@ -96,7 +104,13 @@ Programmatic use:
 ```python
 from tagforge import FillConfig, FillMapping, run_column_fill
 
-pairs = [FillMapping("Equipment Description", "Equipment Description Abbr")]
+pairs = [
+    # write into a column that already exists
+    FillMapping("Equipment Description", "Equipment Description Abbr"),
+    # create a new column and append it at the end of the output
+    FillMapping("Parameter", "Short Parameter", new_column=True),
+]
 result = run_column_fill(df, table, pairs, FillConfig())
-result.output_frame   # same columns as df, target column filled
+result.output_frame   # same columns as df (+ new ones at the end), filled
+result.new_columns    # ["Short Parameter"]
 ```

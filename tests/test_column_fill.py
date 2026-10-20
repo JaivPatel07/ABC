@@ -1,9 +1,10 @@
 """Tests for the "fill abbreviations into columns" engine.
 
 The important guarantees are the user's rules: **the abbreviation is
-written into a target column that already exists** (no column is created)
-and **if a value has no abbreviation, the target cell stays empty** - the
-original text is never copied into it.
+written into the target column the user selected** (an existing column, or
+one explicitly created at the end of the file) and **if a value has no
+abbreviation, the target cell stays empty** - the original text is never
+copied into it.
 """
 
 import io
@@ -142,6 +143,51 @@ def test_source_frame_is_never_modified(frame, sample_table):
     before = frame.copy(deep=True)
     run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     pd.testing.assert_frame_equal(frame, before)
+
+
+# ---------------------------------------------------------------------------
+# new columns (added at the end)
+# ---------------------------------------------------------------------------
+def test_new_column_is_appended_at_the_end(frame, sample_table):
+    mapping = FillMapping("Equipment", "Equipment Abbr 2", new_column=True)
+    result = run_column_fill(frame, sample_table, [mapping], FillConfig())
+
+    assert list(result.output_frame.columns) == list(frame.columns) + ["Equipment Abbr 2"]
+    assert result.output_frame["Equipment Abbr 2"].tolist() == [
+        "CT No 2", "BFW PMP B", "", ""
+    ]
+    assert result.new_columns == ["Equipment Abbr 2"]
+    # the uploaded frame is untouched and never gets the new column
+    assert "Equipment Abbr 2" not in frame.columns
+    assert len(result.output_frame) == len(frame)
+
+
+def test_new_column_uses_the_target_column_name_as_given(frame, sample_table):
+    mapping = FillMapping("Parameter", "Short Param", new_column=True)
+    result = run_column_fill(frame, sample_table, [mapping], FillConfig())
+    assert result.columns[0].target_name == "Short Param"
+    assert result.output_frame["Short Param"].tolist() == ["TMP", "", "", "PI"]
+
+
+def test_new_column_name_must_not_already_exist(frame, sample_table):
+    mapping = FillMapping("Equipment", "Equipment Abbr", new_column=True)
+    with pytest.raises(ValueError, match="already exists"):
+        run_column_fill(frame, sample_table, [mapping], FillConfig())
+
+
+def test_existing_and_new_targets_can_be_filled_together(frame, sample_table):
+    mappings = [
+        FillMapping("Equipment", "Equipment Abbr"),
+        FillMapping("Equipment", "Short Equipment", new_column=True),
+        FillMapping("Parameter", "Parameter Abbr"),
+    ]
+    result = run_column_fill(frame, sample_table, mappings, FillConfig())
+
+    assert list(result.output_frame.columns) == list(frame.columns) + ["Short Equipment"]
+    assert result.output_frame["Equipment Abbr"].tolist() == result.output_frame["Short Equipment"].tolist()
+    assert result.new_columns == ["Short Equipment"]
+    summary = build_fill_summary_frame(result)
+    assert list(summary["New column"]) == ["No", "Yes", "No"]
 
 
 def test_one_source_can_fill_two_existing_targets(frame, sample_table):
@@ -319,6 +365,15 @@ def test_fill_workbook_without_reports_has_one_sheet(frame, sample_table):
     data = build_fill_workbook(result, include_report=False)
     sheets = pd.read_excel(io.BytesIO(data), sheet_name=None)
     assert list(sheets) == ["Filled Data"]
+
+
+def test_fill_workbook_keeps_a_new_column_at_the_end(frame, sample_table):
+    mapping = FillMapping("Equipment", "Short Equipment", new_column=True)
+    result = run_column_fill(frame, sample_table, [mapping], FillConfig())
+    data = build_fill_workbook(result, include_report=False)
+    filled = pd.read_excel(io.BytesIO(data), sheet_name="Filled Data")
+    assert list(filled.columns) == list(frame.columns) + ["Short Equipment"]
+    assert filled["Short Equipment"].iloc[0] == "CT No 2"
 
 
 def test_fill_report_workbook(frame, sample_table):
