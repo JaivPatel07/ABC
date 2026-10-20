@@ -90,6 +90,7 @@ def build_fill_settings_frame(result: FillResult) -> pd.DataFrame:
         ("Generated on", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         ("Rows in the file", result.rows),
         ("Columns filled", len(result.columns)),
+        ("New columns created at the end", len(result.new_columns)),
         ("Cells with an abbreviation", result.filled_cells),
         ("Cells left empty (no abbreviation)", result.not_found_cells),
         ("Empty source cells", result.empty_cells),

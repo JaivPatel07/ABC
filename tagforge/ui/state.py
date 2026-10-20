@@ -85,4 +85,6 @@ def widget_keys() -> list:
         "editor_preview",
         "editor_unknown",
         "editor_mappings",
+        "fill_row_ids",
+        "fill_row_seq",
     ]

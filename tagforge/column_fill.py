@@ -3,10 +3,11 @@
 This is the "column filler" mode of TagForge.  It is different from the tag
 generator in :mod:`tagforge.taggen`:
 
-* the user maps **source column -> target column** pairs, e.g.
+* the user maps **source column -> target column** pairs manually, e.g.
   ``Equipment Description -> Equipment Description Abbr``.  The target
-  column **already exists in the file** (usually empty) - the filler writes
-  into it and **never creates a new column**,
+  column normally **already exists in the file** (usually empty) and the
+  filler writes into it.  A mapping can also ask for a **new column**, which
+  is appended at the end of the file,
 * any number of pairs can be filled in one run,
 * **one** abbreviation list is used for every pair,
 * only the abbreviation is written - words that are not in the list are
@@ -112,15 +113,18 @@ _ABBREVIATION_FALLBACK = "Abbreviation"
 # ---------------------------------------------------------------------------
 @dataclass(init=False)
 class FillMapping:
-    """One "source column -> existing target column" instruction.
+    """One "source column -> target column" instruction.
 
-    ``target`` is a column that **already exists** in the frame (usually an
-    empty ``… Abbr`` column supplied by the user); the abbreviation is
-    written into it.  No new column is ever created.
+    By default ``target`` is a column that **already exists** in the frame
+    (usually an empty ``… Abbr`` column supplied by the user) and the
+    abbreviation is written into it.
 
-    ``target`` may be empty only as a shortcut: :func:`run_column_fill`
-    then looks for an existing column named
-    ``source + FillConfig.output_suffix`` and fails if there is none.
+    Set ``new_column=True`` to **create** ``target`` when it does not exist.
+    The new column is appended at the end of the output frame; the uploaded
+    source frame is still never modified.  ``target`` may be empty as a
+    shortcut when filling an existing column: :func:`run_column_fill` then
+    looks for a column named ``source + FillConfig.output_suffix`` and fails
+    if there is none.
 
     ``output`` is accepted as a backwards-compatible alias of ``target``.
     ``match_mode`` may be empty - the global :attr:`FillConfig.match_mode`
@@ -130,6 +134,7 @@ class FillMapping:
     source: str
     target: str = ""
     match_mode: str = ""
+    new_column: bool = False
 
     def __init__(
         self,
@@ -138,10 +143,12 @@ class FillMapping:
         match_mode: str = "",
         *,
         output: str = "",
+        new_column: bool = False,
     ) -> None:
         self.source = source
         self.target = target or output
         self.match_mode = match_mode
+        self.new_column = bool(new_column)
 
     @property
     def output(self) -> str:  # backwards-compatible alias of ``target``
@@ -152,7 +159,7 @@ class FillMapping:
         self.target = value
 
     def resolved_target(self, config: "FillConfig") -> str:
-        """The column to write into (still has to exist in the frame)."""
+        """The column to write into (created at the end when ``new_column``)."""
         return (self.target or "").strip() or f"{self.source}{config.output_suffix}"
 
     def resolved_mode(self, config: "FillConfig") -> str:
@@ -296,6 +303,16 @@ class FillResult:
     @property
     def kept_cells(self) -> int:
         return sum(column.kept for column in self.columns)
+
+    @property
+    def new_columns(self) -> List[str]:
+        """Target columns that were created (they did not exist in the source)."""
+        existing = {str(column) for column in self.source_frame.columns}
+        return [
+            column.target_name
+            for column in self.columns
+            if column.target_name not in existing
+        ]
 
     def column(self, source: str) -> Optional[FilledColumn]:
         return next((column for column in self.columns if column.mapping.source == source), None)
@@ -467,8 +484,10 @@ def run_column_fill(
     """Fill every mapped target column and return the result frame.
 
     The source ``frame`` is never modified.  Abbreviations are written into
-    the **existing** target column of each mapping (overwriting whatever it
-    contained - it is normally empty); no column is created, removed or
+    the target column of each mapping (overwriting whatever it contained -
+    it is normally empty).  Existing columns keep their position.  A mapping
+    with ``new_column=True`` whose target is not in the frame creates that
+    column at the **end** of the output; nothing else is created, removed or
     moved, and all rows are preserved.
     """
     if frame is None:
@@ -479,6 +498,7 @@ def run_column_fill(
     mappings = list(mappings or [])
 
     available = [str(column) for column in frame.columns]
+    existing_by_key = {name.strip().lower(): name for name in available}
     resolved: List[Tuple[FillMapping, str, str]] = []
     used_targets: set = set()
     for mapping in mappings:
@@ -488,25 +508,35 @@ def run_column_fill(
                 f"Available columns: {', '.join(available) or 'none'}."
             )
         target_name = mapping.resolved_target(config)
-        if target_name not in available:
+        target_key = target_name.strip().lower()
+        if mapping.new_column:
+            if target_key in existing_by_key:
+                raise ValueError(
+                    f"Cannot create a new column '{target_name}' - a column "
+                    f"with that name already exists in the data file. Pick "
+                    f"the existing column as the target, or choose another "
+                    f"name for the new column."
+                )
+        elif target_name not in available:
             raise KeyError(
                 f"Target column '{target_name}' was not found in the data file. "
                 f"The filler does not create columns - choose a column that "
-                f"already exists in the file. "
+                f"already exists in the file, or mark the mapping as a new "
+                f"column. "
                 f"Available columns: {', '.join(available) or 'none'}."
             )
-        if target_name == mapping.source:
+        if target_name == mapping.source and not mapping.new_column:
             raise ValueError(
                 f"Source and target are both '{mapping.source}' - filling it "
                 f"would overwrite the original text. Choose a different "
                 f"target column."
             )
-        if target_name in used_targets:
+        if target_key in used_targets:
             raise ValueError(
                 f"Target column '{target_name}' is used more than once. "
                 f"Each target column can only be filled from one source column."
             )
-        used_targets.add(target_name)
+        used_targets.add(target_key)
         resolved.append((mapping, target_name, mapping.resolved_mode(config)))
 
     filled_columns: List[FilledColumn] = []
@@ -591,16 +621,18 @@ def run_column_fill(
 
 
 def _build_output_frame(frame: pd.DataFrame, filled_columns: Sequence[FilledColumn]) -> pd.DataFrame:
-    """A copy of ``frame`` with each existing target column filled.
+    """A copy of ``frame`` with every target column filled.
 
-    Same columns, same order, same rows - nothing is created or moved.
-    Only the target columns get new values.
+    Existing target columns keep their position.  Columns requested with
+    ``new_column=True`` are appended at the end, in mapping order.  All other
+    columns, their order and all rows are preserved.
     """
     output = frame.copy()
     for column in filled_columns:
-        output[column.target_name] = pd.Series(
-            column.values, index=frame.index, dtype="object"
-        )
+        values = pd.Series(column.values, index=frame.index, dtype="object")
+        # An existing name keeps its position; a name that is not there is
+        # appended at the end (that is how pandas assigns a new column).
+        output[column.target_name] = values
     return output
 
 
@@ -615,6 +647,7 @@ def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
             {
                 "Source column": column.mapping.source,
                 "Target column": column.target_name,
+                "New column": "Yes" if column.target_name in result.new_columns else "No",
                 "Filled": column.filled,
                 "Left empty (no abbreviation)": column.not_found,
                 "Empty source cell": column.empty,
@@ -623,6 +656,7 @@ def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
     columns = [
         "Source column",
         "Target column",
+        "New column",
         "Filled",
         "Left empty (no abbreviation)",
         "Empty source cell",

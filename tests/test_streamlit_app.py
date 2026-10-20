@@ -15,7 +15,7 @@ import pytest
 
 from tagforge import NamingConfig, load_table_from_frame
 from tagforge.column_fill import FillConfig, FillMapping
-from tagforge.ui.fill_pages import FILL_STEPS
+from tagforge.ui.fill_pages import FILL_STEPS, NEW_TARGET_OPTION
 from tagforge.ui.modes import MODE_FILL, MODE_TAG
 from tagforge.ui.pages import STEPS
 from tagforge.ui.widgets import display_frame
@@ -172,15 +172,51 @@ def test_fill_mode_step_three_detects_pairs_and_saves_the_mapping():
     ]
 
 
-def test_fill_mode_step_three_select_all_and_clear():
+def test_fill_mode_step_three_maps_are_manual_dropdowns():
     at = _inject_fill(_app_test())
     at.session_state["tf_fill_step"] = 3
     at.session_state["fill_step_nav"] = FILL_STEPS[2]
     at.run()
     assert not at.exception
 
-    # Select all detected abbreviation columns -> three pairs
-    at.button(key="fill_select_all").click().run()
+    # One visible row (with a source and a target dropdown) per mapping.
+    rows = at.session_state["fill_row_ids"]
+    assert len(rows) == 2
+    assert at.selectbox(key=f"fill_row_src::{rows[0]}").value == "Equipment Description"
+    assert at.selectbox(key=f"fill_row_tgt::{rows[0]}").value == "Equipment Description Abbr"
+
+    # Change the first row by hand to any other existing column.
+    at.selectbox(key=f"fill_row_src::{rows[0]}").set_value("Qty")
+    at.selectbox(key=f"fill_row_tgt::{rows[0]}").set_value("Remarks").run()
+    assert not at.exception
+
+    mappings = at.session_state["tf_fill_mappings"]
+    assert [(mapping.source, mapping.target) for mapping in mappings] == [
+        ("Qty", "Remarks"),
+        ("Parameter", "Parameter Abbr"),
+    ]
+
+
+def test_fill_mode_step_three_add_row_and_remove_all():
+    at = _inject_fill(_app_test())
+    at.session_state["tf_fill_step"] = 3
+    at.session_state["fill_step_nav"] = FILL_STEPS[2]
+    at.run()
+    assert not at.exception
+    initial = len(at.session_state["fill_row_ids"])
+
+    at.button(key="fill_add_row").click().run()
+    assert not at.exception
+    assert len(at.session_state["fill_row_ids"]) == initial + 1
+
+    # Remove all rows -> no mapping, nothing to fill.
+    at.button(key="fill_clear_rows").click().run()
+    assert not at.exception
+    assert at.session_state["fill_row_ids"] == []
+    assert at.session_state["tf_fill_mappings"] == []
+
+    # The detected pairs can be loaded again as a starting point.
+    at.button(key="fill_add_detected").click().run()
     assert not at.exception
     mappings = at.session_state["tf_fill_mappings"]
     assert [(mapping.source, mapping.target) for mapping in mappings] == [
@@ -189,10 +225,42 @@ def test_fill_mode_step_three_select_all_and_clear():
         ("Parameter", "Parameter Abbr"),
     ]
 
-    # Clear -> nothing selected, nothing to fill
-    at.button(key="fill_clear").click().run()
+
+def test_fill_mode_can_create_a_new_column_at_the_end():
+    at = _inject_fill(_app_test())
+    at.session_state["tf_fill_step"] = 3
+    at.session_state["fill_step_nav"] = FILL_STEPS[2]
+    at.run()
     assert not at.exception
-    assert at.session_state["tf_fill_mappings"] == []
+
+    at.button(key="fill_add_row").click().run()
+    row = at.session_state["fill_row_ids"][-1]
+    at.selectbox(key=f"fill_row_src::{row}").set_value("Equipment Description").run()
+    at.selectbox(key=f"fill_row_tgt::{row}").set_value(NEW_TARGET_OPTION).run()
+    assert not at.exception
+    at.text_input(key=f"fill_row_new::{row}").set_value("Short Description").run()
+    assert not at.exception
+
+    mappings = at.session_state["tf_fill_mappings"]
+    assert (mappings[-1].source, mappings[-1].target) == (
+        "Equipment Description",
+        "Short Description",
+    )
+    assert mappings[-1].new_column is True
+
+    # The downloaded workbook has the new column as the very last column.
+    at.session_state["tf_fill_step"] = 4
+    at.session_state["fill_step_nav"] = FILL_STEPS[3]
+    at.run()
+    assert not at.exception
+
+    sheets = pd.read_excel(io.BytesIO(at.session_state["tf_fill_export"]), sheet_name=None)
+    filled = sheets["Filled Data"]
+    source = at.session_state["tf_data_frame"]
+    assert list(filled.columns) == [str(column) for column in source.columns] + [
+        "Short Description"
+    ]
+    assert filled["Short Description"].iloc[0] == "CT No 2"
 
 
 def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():

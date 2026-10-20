@@ -4,9 +4,11 @@ Kept as simple as possible:
 
 1. upload the main file,
 2. upload the abbreviation list,
-3. map columns - **source column -> target column**.  The target column
-   already exists in the user's file (usually empty), so no new column is
-   ever created.  Any number of pairs can be filled in one run,
+3. map columns **manually** - one row per pair: choose the source column
+   with the full text and the target column where the abbreviation goes.
+   The target normally already exists in the user's file (usually empty),
+   but a row can also ask for a **new column**, which is added at the end
+   of the downloaded file.  Any number of pairs can be filled in one run,
 4. preview and download.
 
 There are no settings screens: abbreviations are matched word by word
@@ -33,6 +35,7 @@ from ..column_fill import (
     build_fill_not_found_frame,
     build_fill_summary_frame,
     run_column_fill,
+    unique_column_name,
 )
 from ..detect import guess_fill_pairs, guess_pair
 from ..exporters import build_fill_workbook
@@ -43,6 +46,7 @@ from .widgets import column_picker, display_frame, download_button, full_width, 
 __all__ = [
     "FILL_STEP_TITLES",
     "FILL_STEPS",
+    "NEW_TARGET_OPTION",
     "render_fill_sidebar",
     "render_fill_step",
 ]
@@ -157,8 +161,11 @@ def _step_fill_data(state) -> None:
         st.caption(f"Loaded: **{getattr(state, 'data_file_name', '')}**")
 
     if not state.data_bytes:
-        st.info("Upload your file. It should already contain the (empty) "
-                "abbreviation column(s) you want filled.")
+        st.info(
+            "Upload your file. You can fill abbreviation columns that already "
+            "exist in it - or create a new abbreviation column at the end in "
+            "step 3."
+        )
         return
 
     frame = _load_frame(state, "data")
@@ -235,19 +242,168 @@ def _step_fill_abbreviations(state) -> None:
 
 
 # ===========================================================================
-# step 3 - map source columns to existing target columns
+# step 3 - map columns manually (source -> target)
 # ===========================================================================
-def _set_fill_targets(targets: List[str]) -> None:
-    """Callback for the *Select all* / *Clear* buttons."""
-    st.session_state["fill_targets"] = list(targets)
+NEW_TARGET_OPTION = "➕ New column at the end…"
+
+_SRC_KEY = "fill_row_src::{}"
+_TGT_KEY = "fill_row_tgt::{}"
+_NEW_KEY = "fill_row_new::{}"
+_FILL_ROW_WIDTHS = [3.2, 3.2, 2.4, 0.7]
+
+
+def _fill_row_ids() -> List[int]:
+    """The row ids currently shown in the manual mapping table."""
+    try:
+        return [int(value) for value in (st.session_state.get("fill_row_ids") or [])]
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return []
+
+
+def _fill_row_key(kind: str, row_id: int) -> str:
+    template = {"source": _SRC_KEY, "target": _TGT_KEY, "name": _NEW_KEY}[kind]
+    return template.format(row_id)
+
+
+def _next_fill_row_id() -> int:
+    # Never reuse an id, even if the counter and the visible rows got out of
+    # sync (for example after a hot reload during development).
+    current = max(
+        int(st.session_state.get("fill_row_seq", 0) or 0),
+        max(_fill_row_ids(), default=0),
+    )
+    row_id = current + 1
+    st.session_state["fill_row_seq"] = row_id
+    return row_id
+
+
+def _add_fill_row(source: str = "", target: str = "", new_name: str = "") -> int:
+    """Callback: add one mapping row (empty unless values are given)."""
+    ids = _fill_row_ids()
+    row_id = _next_fill_row_id()
+    ids.append(row_id)
+    st.session_state["fill_row_ids"] = ids
+    st.session_state[_fill_row_key("source", row_id)] = source or ""
+    st.session_state[_fill_row_key("target", row_id)] = target or ""
+    st.session_state[_fill_row_key("name", row_id)] = new_name or ""
+    return row_id
+
+
+def _drop_fill_rows() -> None:
+    for row_id in _fill_row_ids():
+        for kind in ("source", "target", "name"):
+            st.session_state.pop(_fill_row_key(kind, row_id), None)
+    st.session_state["fill_row_ids"] = []
+
+
+def _set_fill_rows(rows) -> None:
+    """Callback: replace every row with ``(source, target, new_name)`` tuples."""
+    _drop_fill_rows()
+    for source, target, new_name in rows:
+        _add_fill_row(source, target, new_name)
+
+
+def _remove_fill_row(row_id: int) -> None:
+    """Callback: remove one mapping row and forget its widget values."""
+    st.session_state["fill_row_ids"] = [
+        value for value in _fill_row_ids() if value != row_id
+    ]
+    for kind in ("source", "target", "name"):
+        st.session_state.pop(_fill_row_key(kind, row_id), None)
+
+
+def _seed_fill_rows(columns: List[str], detected, previous) -> None:
+    """Create the rows once.  Detected pairs are only a starting hint."""
+    if "fill_row_ids" in st.session_state:
+        return
+    rows = []
+    for mapping in previous:
+        source = mapping.source
+        if source not in columns:
+            continue
+        target = mapping.resolved_target(FillConfig())
+        if getattr(mapping, "new_column", False) or target not in columns:
+            rows.append((source, NEW_TARGET_OPTION, target))
+        else:
+            rows.append((source, target, ""))
+    if not rows:
+        rows = [(source, target, "") for source, target in detected]
+    if not rows:
+        rows = [("", "", "")]
+    _set_fill_rows(rows)
+
+
+def _init_widget_value(key: str, value: str, options: List[str]) -> None:
+    if key not in st.session_state or st.session_state[key] not in options:
+        st.session_state[key] = value if value in options else options[0]
+
+
+def _target_option_label(value: str) -> str:
+    if value == "":
+        return "-- select target column --"
+    return value
+
+
+def _build_fill_mappings(row_ids: List[int], columns: List[str]):
+    """Turn the visible rows into mappings plus friendly validation notes."""
+    mappings: List[FillMapping] = []
+    problems: List[str] = []
+    created: List[str] = []
+    renamed: List[tuple] = []
+    used_names = list(columns)
+    used_targets: dict = {}
+
+    for position, row_id in enumerate(row_ids, start=1):
+        source = str(st.session_state.get(_fill_row_key("source", row_id)) or "")
+        choice = str(st.session_state.get(_fill_row_key("target", row_id)) or "")
+        if not source and not choice:
+            continue  # an untouched row is ignored
+        if not source:
+            problems.append(f"Row {position}: choose the column with the full text.")
+            continue
+        if not choice:
+            problems.append(f"Row {position}: choose where to put the abbreviation.")
+            continue
+
+        if choice == NEW_TARGET_OPTION:
+            typed = str(
+                st.session_state.get(_fill_row_key("name", row_id)) or ""
+            ).strip()
+            wanted = typed or f"{source} Abbr"
+            final = unique_column_name(used_names, wanted)
+            if final != wanted:
+                renamed.append((wanted, final))
+            used_names.append(final)
+            mapping = FillMapping(source=source, target=final, new_column=True)
+            created.append(final)
+        else:
+            mapping = FillMapping(source=source, target=choice)
+
+        key = mapping.target.strip().lower()
+        if key in used_targets:
+            problems.append(
+                f"'{mapping.target}' is selected as the target of more than one row."
+            )
+            continue
+        if not mapping.new_column and mapping.target == mapping.source:
+            problems.append(
+                f"Row {position}: the source and the target are both "
+                f"'{mapping.source}' - choose a different target column."
+            )
+            continue
+        used_targets[key] = mapping.target
+        mappings.append(mapping)
+
+    return mappings, problems, created, renamed
 
 
 def _step_fill_columns(state) -> None:
-    st.subheader("3. Map columns (source -> target)")
+    st.subheader("3. Map columns manually (source -> target)")
     st.caption(
-        "Target = the existing column in your file where the abbreviation "
-        "will be put. Source = the column with the full text. "
-        "No new column is created. No match = empty cell."
+        "Choose the column with the full text (source) and the column where "
+        "the abbreviation must be written (target). Add one row per column. "
+        "You can also create a new column - it is added at the end of the "
+        "file. No match = empty cell."
     )
 
     frame = _require_fill_data(state)
@@ -262,81 +418,128 @@ def _step_fill_columns(state) -> None:
 
     columns = [str(column) for column in frame.columns]
     detected = guess_fill_pairs(columns)
-    detected_targets = [target for _source, target in detected]
-    detected_source = {target: source for source, target in detected}
-    previous = {
-        mapping.target: mapping.source
-        for mapping in (state.fill_mappings or [])
-        if mapping.target in columns and mapping.source in columns
-    }
+    previous = list(state.fill_mappings or [])
+    _seed_fill_rows(columns, detected, previous)
 
-    # Seed / clean the multiselect value before the widget is created.
-    if "fill_targets" not in st.session_state:
-        st.session_state["fill_targets"] = list(previous) or list(detected_targets)
-    else:
-        valid = [name for name in st.session_state["fill_targets"] if name in columns]
-        if valid != list(st.session_state["fill_targets"]):
-            st.session_state["fill_targets"] = valid
-
-    left, right = st.columns(2)
-    with left:
-        st.button(
-            "Select all abbreviation columns",
-            key="fill_select_all",
-            disabled=not detected_targets,
-            on_click=_set_fill_targets,
-            args=(detected_targets,),
-            **full_width(st.button),
-        )
-    with right:
-        st.button(
-            "Clear",
-            key="fill_clear",
-            on_click=_set_fill_targets,
-            args=([],),
-            **full_width(st.button),
-        )
     if detected:
         st.caption(
-            "Detected: "
+            "Suggested pairs (only a hint - change any dropdown): "
             + ", ".join(f"{source} -> {target}" for source, target in detected)
         )
 
-    selected = st.multiselect(
-        "Target columns to fill (already in your file)",
-        options=columns,
-        key="fill_targets",
-    )
-
-    mappings: List[FillMapping] = []
-    missing: List[str] = []
-    for target in selected:
-        key = f"fill_src_for::{target}"
-        options = [""] + [name for name in columns if name != target]
-        guess = previous.get(target) or detected_source.get(target) or ""
-        if key not in st.session_state:
-            st.session_state[key] = guess if guess in options else ""
-        elif st.session_state[key] not in options:
-            st.session_state[key] = ""
-        source = st.selectbox(
-            f"Fill '{target}' from",
-            options=options,
-            key=key,
-            format_func=lambda value: "-- select source column --" if value == "" else value,
+    toolbar = st.columns([1.1, 1.4, 1.0, 0.9])
+    with toolbar[0]:
+        st.button(
+            "＋ Add column",
+            key="fill_add_row",
+            on_click=_add_fill_row,
+            help="Add another source -> target mapping row.",
+            **full_width(st.button),
         )
-        if source:
-            mappings.append(FillMapping(source=source, target=target))
-        else:
-            missing.append(target)
+    with toolbar[1]:
+        st.button(
+            "Add suggested pairs",
+            key="fill_add_detected",
+            on_click=_set_fill_rows,
+            args=([(source, target, "") for source, target in detected],),
+            disabled=not detected,
+            help="Fill the rows with the pairs detected from the column names.",
+            **full_width(st.button),
+        )
+    with toolbar[2]:
+        st.button(
+            "Remove all",
+            key="fill_clear_rows",
+            on_click=_set_fill_rows,
+            args=([],),
+            **full_width(st.button),
+        )
+    with toolbar[3]:
+        st.caption(f"{len(_fill_row_ids()):,} mapping row(s)")
 
-    state.fill_mappings = mappings
+    st.caption(
+        "To create a column that is not in the file yet, choose "
+        f"**{NEW_TARGET_OPTION}** as the target."
+    )
+    head = st.columns(_FILL_ROW_WIDTHS)
+    head[0].markdown("**Column with the full text (source)**")
+    head[1].markdown("**Where to put the abbreviation (target)**")
+    head[2].markdown("**Name of the new column**")
+    head[3].markdown("")
 
-    if not selected:
-        st.info("Select at least one target column above.")
+    row_ids = _fill_row_ids()
+    source_options = [""] + columns
+    target_options = [""] + columns + [NEW_TARGET_OPTION]
+
+    for row_id in row_ids:
+        source_key = _fill_row_key("source", row_id)
+        target_key = _fill_row_key("target", row_id)
+        name_key = _fill_row_key("name", row_id)
+        _init_widget_value(source_key, "", source_options)
+        _init_widget_value(target_key, "", target_options)
+
+        left, middle, right, remove = st.columns(_FILL_ROW_WIDTHS)
+        with left:
+            st.selectbox(
+                "Column with the full text (source)",
+                options=source_options,
+                key=source_key,
+                format_func=lambda value: "-- select source column --"
+                if value == ""
+                else value,
+                label_visibility="collapsed",
+            )
+        with middle:
+            st.selectbox(
+                "Where to put the abbreviation (target)",
+                options=target_options,
+                key=target_key,
+                format_func=_target_option_label,
+                label_visibility="collapsed",
+            )
+        with right:
+            if st.session_state.get(target_key) == NEW_TARGET_OPTION:
+                source = str(st.session_state.get(source_key) or "")
+                st.text_input(
+                    "Name of the new column",
+                    key=name_key,
+                    placeholder=f"{source} Abbr" if source else "e.g. Equipment Abbr",
+                    label_visibility="collapsed",
+                    help="Leave empty to use '<source> Abbr'. "
+                    "The column is added at the end of the file.",
+                )
+        with remove:
+            st.button(
+                "✕",
+                key=f"fill_remove::{row_id}",
+                on_click=_remove_fill_row,
+                args=(row_id,),
+                help="Remove this mapping row.",
+                **full_width(st.button),
+            )
+
+    mappings, problems, created, renamed = _build_fill_mappings(row_ids, columns)
+    # A half-finished row must not be used by step 4 behind the user's back.
+    state.fill_mappings = [] if problems else mappings
+
+    for problem in problems:
+        note(problem, "error")
+    if problems:
         return
-    if missing:
-        st.warning("Select a source column for: " + ", ".join(missing))
+    if not mappings:
+        st.info(
+            "No mapping yet. Pick a source and a target above, or click "
+            "**＋ Add column** to add a row."
+        )
         return
+
+    for old, new in renamed:
+        note(
+            f"'{old}' is already used - the new column will be named '{new}'.",
+            "info",
+        )
+    if created:
+        st.caption("New column(s) at the end of the file: " + ", ".join(created))
 
     preview = run_column_fill(frame.head(10), table, mappings, config)
     shown: List[str] = []
@@ -438,8 +641,9 @@ def _step_fill_download(state) -> None:
         st.markdown("**Values with no abbreviation (left empty)**")
         st.dataframe(not_found, **full_width(st.dataframe), hide_index=True)
 
-    # One simple download: same file, same sheet name, target columns
-    # filled. No extra sheets, no new columns.
+    # One simple download: same file, same sheet name, mapped target columns
+    # filled. New columns, when requested, are already at the end of the
+    # output frame. No extra sheets.
     sheet_name = str(state.get("data_sheet") or "Filled Data")
     fingerprint = (
         _fill_fingerprint(state, list(state.fill_mappings), state.fill_config or FillConfig())
