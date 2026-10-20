@@ -285,8 +285,9 @@ def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():
     assert "Parameter Abbr" in filled.columns
     # word-wise mode rebuilds the whole sentence: "Cooling Tower No 2" -> "CT No 2"
     assert filled.loc[0, "Equipment Description Abbr"] == "CT No 2"
-    # row 3 (index 2) has Parameter = "Flow" which is not in the sample list
-    assert pd.isna(filled.loc[2, "Parameter Abbr"])
+    # row 3 (index 2) has Parameter = "Flow" which is not in the sample list:
+    # the old value is kept (never emptied, never guessed)
+    assert filled.loc[2, "Parameter Abbr"] == "Flow"
     # row 3 (index 2) has an equipment description, word-wise keeps all words: "boiler feed water pump a" -> "BFW PMP a"
     val = filled.loc[2, "Equipment Description Abbr"]
     assert "BFW" in val and "PMP" in val
@@ -294,7 +295,7 @@ def test_fill_mode_step_four_builds_the_workbook_with_empty_cells():
     assert pd.isna(filled.loc[27, "Equipment Description Abbr"])
 
 
-def test_fill_mode_never_copies_unmatched_text():
+def test_fill_mode_keeps_unmatched_text_and_reports_every_unknown_word():
     at = _inject_fill(_app_test())
     at.session_state["tf_fill_step"] = 4
     at.session_state["fill_step_nav"] = FILL_STEPS[3]
@@ -303,8 +304,15 @@ def test_fill_mode_never_copies_unmatched_text():
 
     result = at.session_state["tf_fill_result"]
     values = result.output_frame["Equipment Description Abbr"].tolist()
-    assert "Agitator" not in values
-    assert "" in values
+    # words that have no abbreviation stay in the sentence, as typed
+    assert "ETP Agitator" in values
+    # a value with no abbreviation at all keeps its original text
+    assert "Flow" in result.output_frame["Parameter Abbr"].tolist()
+    # every unknown word is reported (filled rows included)
+    from tagforge.column_fill import build_fill_unknown_words_frame
+
+    report = build_fill_unknown_words_frame(result)
+    assert "Agitator" in set(report["Word with no abbreviation"])
 
 
 def test_fill_mode_downloads_are_available():

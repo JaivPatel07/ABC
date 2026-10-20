@@ -7,7 +7,7 @@ module                       responsibility
 ===========================  ==================================================
 :mod:`tagforge.text_utils`   cleaning and tokenising text
 :mod:`tagforge.abbreviations` the company abbreviation list and phrase matching
-:mod:`tagforge.column_fill`  fill columns; empty cell when there is no match
+:mod:`tagforge.column_fill`  fill columns; unknown words are kept and reported
 :mod:`tagforge.config`       the naming convention (template, separators, case)
 :mod:`tagforge.taggen`       text -> tag name
 :mod:`tagforge.validation`   empty / unknown / duplicate / invalid checks
@@ -60,6 +60,7 @@ from .column_fill import (
     FillResult,
     build_fill_not_found_frame,
     build_fill_summary_frame,
+    build_fill_unknown_words_frame,
     run_column_fill,
 )
 from .config import (
@@ -102,6 +103,7 @@ __all__ = [
     "run_column_fill",
     "build_fill_summary_frame",
     "build_fill_not_found_frame",
+    "build_fill_unknown_words_frame",
     "build_fill_workbook",
     "build_fill_report_workbook",
     "guess_source_columns",

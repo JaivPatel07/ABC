@@ -10,8 +10,9 @@ generator in :mod:`tagforge.taggen`:
   is appended at the end of the file,
 * any number of pairs can be filled in one run,
 * **one** abbreviation list is used for every pair,
-* only the abbreviation is written - words that are not in the list are
-  **never copied into the target column**; the cell is left empty instead,
+* the abbreviation is written and words that are not in the list are
+  **kept as typed** (they are listed in the "no abbreviation" report); a
+  value where **no** word has an abbreviation keeps its original text,
 * the source column and the uploaded frame are never modified; the result
   is a copy with the same columns in the same order.
 
@@ -30,7 +31,10 @@ Four matching rules are available (chosen by the user):
 ``MATCH_WORDWISE``
     Every phrase is replaced by its abbreviation and the sentence is rebuilt.
     "Cooling Tower No 2" -> ``CT NO 2`` (or ``CT_NO_2`` depending on the
-    separator).  Unknown words can be kept, dropped or make the cell empty.
+    separator).  Unknown words are kept as typed by default
+    ("Cooling Tower Scrubber" -> ``CT Scrubber``) and every such word is
+    listed in the report.  A cell where no word matches keeps its original
+    text.  Unknown words can also be dropped or make the cell empty.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ __all__ = [
     "STATUS_NOT_FOUND",
     "STATUS_EMPTY",
     "STATUS_KEPT",
+    "STATUS_PARTIAL",
     "FillMapping",
     "FillConfig",
     "MatchResult",
@@ -75,6 +80,7 @@ __all__ = [
     "run_column_fill",
     "build_fill_summary_frame",
     "build_fill_not_found_frame",
+    "build_fill_unknown_words_frame",
 ]
 
 # ---------------------------------------------------------------------------
@@ -101,6 +107,7 @@ WORDWISE_UNKNOWN_OPTIONS: Tuple[str, ...] = (WORDWISE_KEEP, WORDWISE_DROP, WORDW
 
 # per-cell status values (also used in the report tables)
 STATUS_FILLED = "Filled"
+STATUS_PARTIAL = "Filled, unknown words kept"
 STATUS_NOT_FOUND = "Not found"
 STATUS_EMPTY = "Empty source cell"
 STATUS_KEPT = "Original kept"
@@ -222,6 +229,8 @@ class MatchResult:
     abbreviation: str
     start: int = 0
     size: int = 1
+    #: words inside the cell that are not in the list (kept as typed / dropped)
+    unknown_words: Tuple[str, ...] = ()
 
 
 @dataclass
@@ -234,10 +243,16 @@ class CellFill:
     matched_phrase: str = ""
     status: str = STATUS_NOT_FOUND
     note: str = ""
+    #: words of this cell that had no abbreviation in the list
+    unknown_words: List[str] = field(default_factory=list)
 
     @property
     def is_filled(self) -> bool:
-        return self.status == STATUS_FILLED and bool(self.abbreviation)
+        return self.status in (STATUS_FILLED, STATUS_PARTIAL) and bool(self.abbreviation)
+
+    @property
+    def has_unknown_words(self) -> bool:
+        return bool(self.unknown_words)
 
 
 @dataclass
@@ -259,7 +274,13 @@ class FilledColumn:
 
     @property
     def filled(self) -> int:
-        return sum(1 for cell in self.cells if cell.status == STATUS_FILLED)
+        """Cells where a real abbreviation was written (with or without kept words)."""
+        return sum(1 for cell in self.cells if cell.status in (STATUS_FILLED, STATUS_PARTIAL))
+
+    @property
+    def partial(self) -> int:
+        """Cells filled with abbreviations *and* unknown words kept as typed."""
+        return sum(1 for cell in self.cells if cell.status == STATUS_PARTIAL)
 
     @property
     def not_found(self) -> int:
@@ -272,6 +293,11 @@ class FilledColumn:
     @property
     def kept(self) -> int:
         return sum(1 for cell in self.cells if cell.status == STATUS_KEPT)
+
+    @property
+    def with_unknown_words(self) -> int:
+        """Cells that contain at least one word with no abbreviation."""
+        return sum(1 for cell in self.cells if cell.has_unknown_words)
 
 
 @dataclass
@@ -305,6 +331,16 @@ class FillResult:
         return sum(column.kept for column in self.columns)
 
     @property
+    def partial_cells(self) -> int:
+        """Cells filled with abbreviations while unknown words were kept."""
+        return sum(column.partial for column in self.columns)
+
+    @property
+    def cells_with_unknown_words(self) -> int:
+        """Cells with at least one word that has no abbreviation in the list."""
+        return sum(column.with_unknown_words for column in self.columns)
+
+    @property
     def new_columns(self) -> List[str]:
         """Target columns that were created (they did not exist in the source)."""
         existing = {str(column) for column in self.source_frame.columns}
@@ -329,6 +365,15 @@ def apply_case(text: str, case: str) -> str:
     if case == CASE_LOWER:
         return text.lower()
     return text
+
+
+def _remember_unknown(unknown: List[str], word: str) -> None:
+    """Add ``word`` to ``unknown`` once (compared case-insensitively)."""
+    if not word:
+        return
+    key = word.lower()
+    if all(existing.lower() != key for existing in unknown):
+        unknown.append(word)
 
 
 def find_match(
@@ -391,8 +436,8 @@ def find_match(
         # This fixes the bug where "Cooling Tower No 2" only returned "CT".
         out_parts: List[str] = []
         phrases: List[str] = []
+        unknown: List[str] = []
         has_abbreviation = False
-        has_unknown = False
         index = 0
         while index < len(keys):
             hit = table.lookup(keys, index, allow_plurals=allow_plural_matching)
@@ -411,23 +456,28 @@ def find_match(
                 out_parts.append(token.text)
                 index += 1
                 continue
+            # Everything below has no abbreviation in the list.
+            _remember_unknown(unknown, token.text)
             if wordwise_unknown == WORDWISE_DROP:
-                has_unknown = True
                 index += 1
                 continue
             if wordwise_unknown == WORDWISE_EMPTY:
                 return None
-            # WORDWISE_KEEP (default): keep original word
+            # WORDWISE_KEEP (default): keep the word exactly as the user typed it
             out_parts.append(token.text)
-            has_unknown = True
             index += 1
 
         if not out_parts:
             return None
-        if not has_abbreviation and has_unknown:
+        if not has_abbreviation:
+            # No word of the cell has an abbreviation.  In the default mode the
+            # cell keeps its original text (never left empty just because the
+            # list is missing a word); the caller writes ``original``.
+            if wordwise_unknown == WORDWISE_KEEP:
+                return MatchResult(" ".join(phrases), "", 0, len(keys), tuple(unknown))
             return None
         joined = separator.join(out_parts)
-        return MatchResult(" ".join(phrases), joined, 0, len(keys))
+        return MatchResult(" ".join(phrases), joined, 0, len(keys), tuple(unknown))
 
     # MATCH_ANY: the longest phrase anywhere in the cell wins; on a tie the
     # earliest phrase wins ("first / longest").
@@ -567,14 +617,33 @@ def run_column_fill(
                     keep_numbers=config.keep_numbers,
                     wordwise_unknown=config.wordwise_unknown,
                 )
-                if match is not None:
+                if match is not None and match.abbreviation:
+                    status = STATUS_PARTIAL if match.unknown_words else STATUS_FILLED
+                    note = ""
+                    if match.unknown_words:
+                        note = "no abbreviation for: " + ", ".join(match.unknown_words) + " - kept as typed"
                     cells.append(
                         CellFill(
                             row_id=row_id,
                             original=original,
                             abbreviation=apply_case(match.abbreviation, config.case),
                             matched_phrase=match.phrase,
-                            status=STATUS_FILLED,
+                            status=status,
+                            note=note,
+                            unknown_words=list(match.unknown_words),
+                        )
+                    )
+                elif match is not None:
+                    # Word-wise mode with "keep unknown words": no word of the
+                    # cell could be abbreviated, so the original text stays.
+                    cells.append(
+                        CellFill(
+                            row_id=row_id,
+                            original=original,
+                            abbreviation=original,
+                            status=STATUS_KEPT,
+                            note="no abbreviation for any word - original text kept",
+                            unknown_words=list(match.unknown_words),
                         )
                     )
                 elif config.when_not_found == NOT_FOUND_KEEP:
@@ -640,7 +709,7 @@ def _build_output_frame(frame: pd.DataFrame, filled_columns: Sequence[FilledColu
 # report tables
 # ---------------------------------------------------------------------------
 def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
-    """One row per mapped pair: how many cells were filled / left empty."""
+    """One row per mapped pair: how many cells were filled / kept / left empty."""
     rows = []
     for column in result.columns:
         rows.append(
@@ -648,7 +717,9 @@ def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
                 "Source column": column.mapping.source,
                 "Target column": column.target_name,
                 "New column": "Yes" if column.target_name in result.new_columns else "No",
-                "Filled": column.filled,
+                "Filled (every word abbreviated)": column.filled - column.partial,
+                "Filled, unknown words kept": column.partial,
+                "Original kept (no abbreviation)": column.kept,
                 "Left empty (no abbreviation)": column.not_found,
                 "Empty source cell": column.empty,
             }
@@ -657,7 +728,9 @@ def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
         "Source column",
         "Target column",
         "New column",
-        "Filled",
+        "Filled (every word abbreviated)",
+        "Filled, unknown words kept",
+        "Original kept (no abbreviation)",
         "Left empty (no abbreviation)",
         "Empty source cell",
     ]
@@ -666,13 +739,25 @@ def build_fill_summary_frame(result: FillResult) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+#: Cell statuses that mean "at least one word here has no abbreviation".
+_NO_ABBREVIATION_STATUSES = (STATUS_PARTIAL, STATUS_NOT_FOUND, STATUS_KEPT)
+
+
 def build_fill_not_found_frame(result: FillResult) -> pd.DataFrame:
-    """Every distinct value that had no abbreviation, with its count."""
+    """Every distinct value that contains a word with no abbreviation.
+
+    This includes three cases, so nothing is hidden from the user:
+
+    * the cell was filled but some words had no abbreviation and were kept
+      as typed (``"Cooling Tower Scrubber"`` -> ``CT Scrubber``),
+    * no word at all could be abbreviated, so the original text was kept,
+    * the cell was left empty because the matching rule found nothing.
+    """
     rows: List[Dict[str, object]] = []
     for column in result.columns:
         grouped: Dict[str, Dict[str, object]] = {}
         for cell in column.cells:
-            if cell.status != STATUS_NOT_FOUND:
+            if cell.status not in _NO_ABBREVIATION_STATUSES:
                 continue
             key = cell.original.lower()
             group = grouped.get(key)
@@ -680,16 +765,72 @@ def build_fill_not_found_frame(result: FillResult) -> pd.DataFrame:
                 grouped[key] = {
                     "Source column": column.mapping.source,
                     "Value with no abbreviation": cell.original,
+                    "Words with no abbreviation": ", ".join(cell.unknown_words),
+                    "Written in target column": cell.abbreviation,
                     "Occurrences": 1,
                     "First row": cell.row_id + 1,
                 }
             else:
                 group["Occurrences"] = int(group["Occurrences"]) + 1
+                words = str(group["Words with no abbreviation"])
+                for word in cell.unknown_words:
+                    if word.lower() not in words.lower().split(", "):
+                        words = f"{words}, {word}" if words else word
+                group["Words with no abbreviation"] = words
 
         for group in sorted(grouped.values(), key=lambda item: (-int(item["Occurrences"]), str(item["Value with no abbreviation"]).lower())):
             rows.append(group)
 
-    columns = ["Source column", "Value with no abbreviation", "Occurrences", "First row"]
+    columns = [
+        "Source column",
+        "Value with no abbreviation",
+        "Words with no abbreviation",
+        "Written in target column",
+        "Occurrences",
+        "First row",
+    ]
     if not rows:
         return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_fill_unknown_words_frame(result: FillResult) -> pd.DataFrame:
+    """One row per distinct word that has no abbreviation in the list.
+
+    The words are collected from every cell (also from cells that were filled),
+    so the user can see exactly which words to add to the abbreviation list.
+    """
+    grouped: Dict[tuple, Dict[str, object]] = {}
+    for column in result.columns:
+        source = column.mapping.source
+        for cell in column.cells:
+            for word in cell.unknown_words:
+                key = (source, word.lower())
+                group = grouped.get(key)
+                if group is None:
+                    grouped[key] = {
+                        "Source column": source,
+                        "Word with no abbreviation": word,
+                        "Occurrences": 1,
+                        "Example value": cell.original,
+                        "Example result": cell.abbreviation,
+                        "First row": cell.row_id + 1,
+                    }
+                else:
+                    group["Occurrences"] = int(group["Occurrences"]) + 1
+
+    columns = [
+        "Source column",
+        "Word with no abbreviation",
+        "Occurrences",
+        "Example value",
+        "Example result",
+        "First row",
+    ]
+    if not grouped:
+        return pd.DataFrame(columns=columns)
+    rows = sorted(
+        grouped.values(),
+        key=lambda item: (-int(item["Occurrences"]), str(item["Word with no abbreviation"]).lower()),
+    )
     return pd.DataFrame(rows, columns=columns)
