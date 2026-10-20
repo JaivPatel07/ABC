@@ -33,13 +33,47 @@ __all__ = [
     "singular_candidates",
     "collapse_repeats",
     "trim_edges",
+    "is_single_letter_token",
+    "is_code_token",
+    "normalize_code_token",
 ]
 
 # A token is either a run of letters or a number (optionally with a decimal
 # separator).  Everything else (punctuation, brackets, dashes, slashes ...) is
 # treated as a separator.  That keeps "Cooling Tower - No 2" and
 # "Cooling Tower No. 2" equivalent.
-TOKEN_PATTERN = re.compile(r"[A-Za-zÀ-ɏ]+|\d+(?:[.,]\d+)?")
+TOKEN_PATTERN = re.compile(r"[A-Za-z]+[-_]\d+[A-Za-z]*|[A-Za-zÀ-ɏ]+|\d+(?:[.,]\d+)?")
+
+# Codes like R-1400 / R-200A  -> letters, hyphen/underscore, digits, optional letters
+_CODE_RE = re.compile(r"^[A-Za-z]+[-_]\d+[A-Za-z]*$")
+
+
+def is_single_letter_token(text: str) -> bool:
+    """True for a single alphabetic character (e.g. \"A\", \"b\")."""
+    return len(text) == 1 and text.isalpha()
+
+
+def is_code_token(text: str) -> bool:
+    """True for R-like codes: letters + '-'/'_' + digits + optional letters.
+
+    Examples: R-1400, R-200A, AB-123, P_100, R_1400
+    """
+    if not text:
+        return False
+    return bool(_CODE_RE.match(text.strip()))
+
+
+def normalize_code_token(text: str) -> str:
+    """Normalise a code token: R-1400 -> R_1400, R-200A -> R_200A.
+
+    Only hyphens are replaced; an already-normalised R_1400 is left as is.
+    Single letters are returned unchanged.
+    """
+    if not text:
+        return text
+    if is_code_token(text):
+        return text.replace("-", "_")
+    return text
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 
@@ -135,7 +169,14 @@ def tokenize(text: str) -> List[Token]:
     tokens: List[Token] = []
     for match in TOKEN_PATTERN.finditer(text):
         raw = match.group(0).replace(",", ".")
-        kind = "number" if raw[0].isdigit() else "word"
+        if not raw:
+            continue
+        if raw[0].isdigit():
+            kind = "number"
+        elif is_code_token(raw):
+            kind = "code"
+        else:
+            kind = "word"
         tokens.append(Token(raw, kind))
     return tokens
 

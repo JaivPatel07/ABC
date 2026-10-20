@@ -92,10 +92,10 @@ def test_unknown_words_inside_a_sentence_are_kept_as_typed(frame, sample_table):
     assert cells[0].status == STATUS_PARTIAL
     assert cells[0].abbreviation == "CT No 2"
     assert cells[0].unknown_words == ["No"]
-    # "Boiler Feed Water Pump B": the trailing "B" is kept
-    assert cells[1].status == STATUS_PARTIAL
+    # "Boiler Feed Water Pump B": the trailing "B" is a single letter -> kept but not counted as unknown
+    assert cells[1].status == STATUS_FILLED
     assert cells[1].abbreviation == "BFW PMP B"
-    assert "B" in cells[1].unknown_words
+    assert cells[1].unknown_words == []
 
 
 def test_whole_cell_must_match_exactly(sample_table):
@@ -332,8 +332,8 @@ def test_summary_counts(frame, sample_table):
     assert list(summary["Source column"]) == ["Equipment", "Parameter"]
     assert list(summary["Target column"]) == ["Equipment Abbr", "Parameter Abbr"]
     equipment = summary.iloc[0]
-    assert equipment["Filled (every word abbreviated)"] == 0
-    assert equipment["Filled, unknown words kept"] == 2
+    assert equipment["Filled (every word abbreviated)"] == 1  # B is single letter, not counted as unknown
+    assert equipment["Filled, unknown words kept"] == 1  # Cooling Tower No 2 has No unknown
     assert equipment["Original kept (no abbreviation)"] == 1  # Agitator
     assert equipment["Empty source cell"] == 1
 
@@ -439,7 +439,7 @@ def test_fill_report_workbook(frame, sample_table):
 def test_statuses_are_reported(frame, sample_table):
     result = run_column_fill(frame, sample_table, [FillMapping("Equipment")], FillConfig())
     statuses = [cell.status for cell in result.columns[0].cells]
-    assert statuses == [STATUS_PARTIAL, STATUS_PARTIAL, STATUS_KEPT, STATUS_EMPTY]
+    assert statuses == [STATUS_PARTIAL, STATUS_FILLED, STATUS_KEPT, STATUS_EMPTY]
 
 
 def test_any_match_prefers_the_longest_phrase_then_the_earliest(table):
