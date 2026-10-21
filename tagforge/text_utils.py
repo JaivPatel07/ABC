@@ -38,14 +38,48 @@ __all__ = [
     "normalize_code_token",
 ]
 
-# A token is either a run of letters or a number (optionally with a decimal
-# separator).  Everything else (punctuation, brackets, dashes, slashes ...) is
-# treated as a separator.  That keeps "Cooling Tower - No 2" and
-# "Cooling Tower No. 2" equivalent.
-TOKEN_PATTERN = re.compile(r"[A-Za-z]+[-_]\d+[A-Za-z]*|[A-Za-zÀ-ɏ]+|\d+(?:[.,]\d+)?")
+# A token is a word, a number (optionally with a decimal separator) or a code.
+# Everything else (punctuation, brackets, dashes, slashes ...) is treated as a
+# separator.  That keeps "Cooling Tower - No 2" and "Cooling Tower No. 2"
+# equivalent.
 
-# Codes like R-1400 / R-200A  -> letters, hyphen/underscore, digits, optional letters
-_CODE_RE = re.compile(r"^[A-Za-z]+[-_]\d+[A-Za-z]*$")
+# The "body" of a code: letters, a hyphen or underscore, then digits.
+_CODE_BODY = r"[A-Za-z]+[-_]\d+"
+
+# The optional letter suffix of a code.  It may be written attached
+# ("R-200A"), joined with a hyphen/underscore ("R-200-A") or separated by one
+# space ("R-200 A").  Only a *single* free-standing letter is allowed after a
+# space, so "Primary Air Fan - 1" is never mistaken for a code.
+_CODE_SUFFIX = r"(?:[A-Za-z]+|(?:[-_][A-Za-z]+)+|\s[A-Za-z](?![A-Za-z]))"
+
+# Codes like R-1400 / R-200A / T-1000-A / T-1000 A
+_CODE_RE = re.compile(r"^" + _CODE_BODY + r"(?:" + _CODE_SUFFIX + r")?$")
+
+# A code typed with spaces around its hyphen ("T - 1000A", "T - 1000 A").  Only
+# a single letter may start it - guarded by lookarounds so the tail of a normal
+# word ("Fan - 1") is never swallowed - and the trailing letter is required.
+_SPACED_CODE = (
+    r"(?<![A-Za-z])[A-Za-z](?![A-Za-z])\s*[-_]\s*\d+(?:\s?[A-Za-z](?![A-Za-z]))"
+)
+
+TOKEN_PATTERN = re.compile(
+    _CODE_BODY + r"(?:" + _CODE_SUFFIX + r")?"
+    r"|" + _SPACED_CODE +
+    r"|[A-Za-zÀ-ɏ]+|\d+(?:[.,]\d+)?"
+)
+
+# Whitespace written around the hyphen/underscore of a code is not part of the
+# code itself: "T - 1000A" -> "T-1000A".
+_SPACE_AROUND_SEPARATOR_RE = re.compile(r"\s*([-_])\s*")
+
+# Separator between the digits and a trailing letter group of a code.  A code
+# is always written with the suffix attached: T-1000-A -> T_1000A.
+_CODE_SUFFIX_JOIN_RE = re.compile(r"(?<=\d)[\s_]+(?=[A-Za-z])")
+
+
+def _compact_code(text: str) -> str:
+    """Drop the spaces a code may carry around its hyphen/underscore."""
+    return _SPACE_AROUND_SEPARATOR_RE.sub(r"\1", text.strip())
 
 
 def is_single_letter_token(text: str) -> bool:
@@ -56,23 +90,27 @@ def is_single_letter_token(text: str) -> bool:
 def is_code_token(text: str) -> bool:
     """True for R-like codes: letters + '-'/'_' + digits + optional letters.
 
-    Examples: R-1400, R-200A, AB-123, P_100, R_1400
+    Examples: R-1400, R-200A, AB-123, P_100, R_1400, T-1000-A, T-1000 A,
+    T - 1000A
     """
     if not text:
         return False
-    return bool(_CODE_RE.match(text.strip()))
+    return bool(_CODE_RE.match(_compact_code(text)))
 
 
 def normalize_code_token(text: str) -> str:
     """Normalise a code token: R-1400 -> R_1400, R-200A -> R_200A.
 
-    Only hyphens are replaced; an already-normalised R_1400 is left as is.
-    Single letters are returned unchanged.
+    The trailing letter suffix always stays attached to the digits, so
+    ``T-1000A``, ``T-1000-A`` and ``T - 1000 A`` all become ``T_1000A``
+    (never ``T_1000_A``).  Only hyphens are replaced; an already-normalised
+    R_1400 is left as is.  Single letters are returned unchanged.
     """
     if not text:
         return text
     if is_code_token(text):
-        return text.replace("-", "_")
+        normalized = _compact_code(text).replace("-", "_")
+        return _CODE_SUFFIX_JOIN_RE.sub("", normalized)
     return text
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
