@@ -3,7 +3,9 @@
 import pandas as pd
 
 from tagforge.text_utils import (
+    is_code_token,
     is_missing,
+    normalize_code_token,
     phrase_key,
     singular_candidates,
     to_text,
@@ -49,3 +51,45 @@ def test_singular_candidates_are_only_used_on_request():
     assert "pump" in singular_candidates("Pumps")
     assert "pump" in singular_candidates("pumps")
     assert singular_candidates("Pump") == []
+
+
+def test_code_tokens_are_recognised():
+    assert is_code_token("T-1000A")
+    assert is_code_token("T-1000-A")
+    assert is_code_token("T - 1000A")
+    assert is_code_token("R-1400")
+    assert is_code_token("P_100")
+    assert not is_code_token("Pump")
+    assert not is_code_token("Primary Air Fan - 1")
+
+
+def test_code_suffix_stays_attached_to_the_number():
+    # a letter suffix after the number belongs to the code: T_1000A, never T_1000_A
+    assert normalize_code_token("T-1000A") == "T_1000A"
+    assert normalize_code_token("T-1000-A") == "T_1000A"
+    assert normalize_code_token("T_1000_A") == "T_1000A"
+    assert normalize_code_token("T-1000 A") == "T_1000A"
+    assert normalize_code_token("T - 1000 A") == "T_1000A"
+    assert normalize_code_token("R-1400") == "R_1400"
+    assert normalize_code_token("Pump") == "Pump"
+    assert normalize_code_token("A") == "A"
+
+
+def test_tokenize_keeps_a_code_in_one_piece():
+    assert [token.text for token in tokenize("T-1000A")] == ["T-1000A"]
+    assert [token.text for token in tokenize("T-1000-A")] == ["T-1000-A"]
+    assert [token.text for token in tokenize("T-1000 A")] == ["T-1000 A"]
+    assert [token.text for token in tokenize("T - 1000A")] == ["T - 1000A"]
+    assert [token.kind for token in tokenize("T - 1000A")] == ["code"]
+
+
+def test_short_words_are_not_mistaken_for_codes():
+    assert [token.text for token in tokenize("No - 2")] == ["No", "2"]
+    assert [token.text for token in tokenize("Fan - 1 A")] == ["Fan", "1", "A"]
+    assert [token.text for token in tokenize("Primary Air Fan - 1 / (A)")] == [
+        "Primary",
+        "Air",
+        "Fan",
+        "1",
+        "A",
+    ]

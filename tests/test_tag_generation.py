@@ -145,3 +145,21 @@ def test_manual_overrides_are_kept():
     assert results[0].tag == "CT"
     assert results[1].tag == "MY_OWN_TAG"
     assert results[1].edited is True
+
+
+def test_code_like_names_keep_the_letter_suffix_attached():
+    # T-1000A must become T_1000A, never T_1000_A
+    assert _tag("T-1000A") == "T_1000A"
+    assert _tag("T-1000-A") == "T_1000A"
+    assert _tag("T_1000_A") == "T_1000A"
+    assert _tag("T-1000 A") == "T_1000A"
+    assert _tag("T - 1000A") == "T_1000A"
+    assert _tag("T - 1000 A") == "T_1000A"
+
+    # the code is one piece, so it is joined to the rest of the tag normally
+    assert _tag("T-1000A Pump") == "T_1000A_PMP"
+    assert _tag("Pump T-1000A") == "PMP_T_1000A"
+    # the code keeps its own "_" between letters and digits; the configured
+    # separator is only used *between* pieces
+    assert _tag("T-1000A Pump", separator=".") == "T_1000A.PMP"
+    assert _tag("T-1000A Pump", separator="-") == "T_1000A-PMP"
